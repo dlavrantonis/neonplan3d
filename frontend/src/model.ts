@@ -739,6 +739,10 @@ export interface OutdoorArea {
   id: string;
   type: OutdoorType;
   points: Vec2[];
+  /** Shown on the plan and in 3D, the same way a room name is. */
+  name?: string;
+  /** Home Assistant area this plot stands for. Linked plots are tappable and show that area's devices. */
+  area_id?: string | null;
   /** Hedges and fences: their height in m (null = 1.2 m / 1.0 m). */
   height?: number | null;
   /** False hides the neon outline (a plot of several lawns without lines crossing it). */

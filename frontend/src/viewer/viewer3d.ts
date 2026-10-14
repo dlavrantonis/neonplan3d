@@ -45,7 +45,7 @@ import {
   type BufferGeometry,
   type Material,
 } from "three";
-import type { Building, Floor, Furniture, Room, StartView } from "../model.ts";
+import type { Building, Floor, Furniture, StartView } from "../model.ts";
 import { recolorLamps, SHADE_SENTINEL, shadeFactors } from "./lamp-colors.ts";
 import { centroid, pointInPolygon, openingStyle, setTerrain, WALL_LAMP_Y } from "../model.ts";
 import { buildEarth } from "./earth.ts";
@@ -434,7 +434,7 @@ interface FloorView {
   lampRanges: Map<string, { start: number; end: number }>;
   /** Room box and room labels with their centres, so labels are placed without recomputing them. */
   bbox: { x0: number; x1: number; z0: number; z1: number } | null;
-  roomPins: { pin: HTMLButtonElement; room: Room; cx: number; cz: number }[];
+  roomPins: { pin: HTMLButtonElement; room: { id: string; name: string }; cx: number; cz: number }[];
   /** Size of the floor label, measured once per text (reading it every frame forces a layout). */
   labelSize: { w: number; h: number } | null;
   materials: FloorMaterials;
@@ -795,21 +795,23 @@ export class FloorplanViewer {
       this.fit(700);
       return;
     }
-    const fv = this.floors.find((f) => f.floor.rooms.some((r) => r.id === roomId));
+    const fv = this.floors.find((f) => f.floor.rooms.some((r) => r.id === roomId))
+      ?? this.floors.find((f) => f.floor.outdoor?.some((a) => a.id === roomId && a.area_id));
     const room = fv?.floor.rooms.find((r) => r.id === roomId);
-    if (!fv || !room) return;
+    const points = room?.points ?? fv?.floor.outdoor?.find((a) => a.id === roomId && a.area_id)?.points;
+    if (!fv || !points || points.length < 3) return;
     // a room may open with a camera of its own (#282)
-    const own = room.start_view;
+    const own = room?.start_view;
     if (own) {
       const base = fv.floor.elevation + fv.ty;
-      const [mx, mz] = centroid(room.points);
+      const [mx, mz] = centroid(points);
       const t = own.target ?? { x: mx, y: 0.3, z: mz };
       this.controls.flyTo({ target: new Vector3(t.x, t.y + base, t.z), radius: own.radius, phi: own.phi, theta: own.theta });
       return;
     }
-    const [cx, cz] = centroid(room.points);
-    const xs = room.points.map((p) => p[0]);
-    const zs = room.points.map((p) => p[1]);
+    const [cx, cz] = centroid(points);
+    const xs = points.map((p) => p[0]);
+    const zs = points.map((p) => p[1]);
     const size = new Vector3(Math.max(...xs) - Math.min(...xs), fv.floor.cut_height, Math.max(...zs) - Math.min(...zs));
     this.controls.flyTo({ target: new Vector3(cx, fv.floor.elevation + fv.ty + 0.3, cz), radius: Math.max(4, this.distanceFor(size) * 1.05), phi: 0.72 });
   }
@@ -1955,6 +1957,19 @@ export class FloorplanViewer {
           bbox.z0 = Math.min(bbox.z0, z);
           bbox.z1 = Math.max(bbox.z1, z);
         }
+      }
+      for (const area of floor.outdoor ?? []) {
+        const name = area.name?.trim();
+        if (!name || area.points.length < 3) continue;
+        const pin = document.createElement("button");
+        pin.className = "fp3d-pin";
+        pin.dataset.room = area.id;
+        pin.dataset.floor = floor.id;
+        this.fillRoomPin(pin, name, this.roomInfo.get(area.id));
+        pin.addEventListener("click", () => this.options.onRoomTap?.(floor.id, area.id));
+        this.labels.append(pin);
+        const [cx, cz] = centroid(area.points);
+        roomPins.push({ pin, room: { id: area.id, name }, cx, cz });
       }
       this.floors.push({
         floor,
@@ -3125,6 +3140,8 @@ export class FloorplanViewer {
         const id = inRange(fv.geo.furnitureTris, tri);
         const entity = id ? this.pickFurniture.get(id) : undefined;
         if (entity) return { entity };
+        const outdoor = inRange(fv.geo.outdoorTris, tri);
+        if (outdoor) return { floorId: fv.floor.id, roomId: outdoor };
         // a wall: the tap stops at it unless it is see-through (cut away, or glass in the floor view)
         if (hit.face && !id) {
           const fold = (fv.wallMesh.geometry.getAttribute("fold") as Float32BufferAttribute | undefined)?.getX(hit.face.a) ?? 32;

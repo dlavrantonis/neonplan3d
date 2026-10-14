@@ -409,6 +409,10 @@ OUTDOOR_SCHEMA = vol.Schema(
         vol.Required("id"): _ID,
         vol.Required("type"): vol.In(OUTDOOR_TYPES),
         vol.Required("points"): vol.All([_POINT], vol.Length(min=3, max=MAX_POINTS)),
+        # shown on the plan and in 3D, like a room name
+        vol.Optional("name", default=""): _NAME,
+        # Home Assistant area this plot stands for (a garden that opens like a room)
+        vol.Optional("area_id", default=None): vol.Any(None, vol.All(str, vol.Length(max=255))),
         # hedges and fences: their height (None = default); outline False hides the neon line
         vol.Optional("height", default=None): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=0.1, max=6))),
         vol.Optional("outline", default=True): bool,

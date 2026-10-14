@@ -2833,7 +2833,7 @@ export class Fp3dEditor extends LitElement {
   /** Areas of a floor's Home Assistant floor that have no room in the plan yet. */
   private unplacedAreas(floor: Floor): HassArea[] {
     if (!floor.ha_floor) return [];
-    const used = new Set(this._doc.floors.flatMap((f) => f.rooms.map((r) => r.area_id)));
+    const used = new Set(this._doc.floors.flatMap((f) => [...f.rooms.map((r) => r.area_id), ...(f.outdoor ?? []).map((a) => a.area_id)]));
     return Object.values(this.hass?.areas ?? {})
       .filter((a) => a.floor_id === floor.ha_floor && !used.has(a.area_id))
       .sort((a, b) => a.name.localeCompare(b.name));
@@ -5725,13 +5725,16 @@ export class Fp3dEditor extends LitElement {
       const big = Math.min(b.x1 - b.x0, b.z1 - b.z0) * this._view.scale > 40;
       return svg`<g data-outdoor=${a.id} class=${`fp3d-out fp3d-out-${a.type}${a.id === this._outdoorId ? " fp3d-out-sel" : ""}`}>
         <polygon points=${pts} />
-        ${big ? svg`<text x=${cx} y=${cy + 4}>${this.t(`out_${a.type}` as I18nKey)}</text>` : nothing}
+        ${big
+          ? svg`<text class=${a.name?.trim() ? "fp3d-room-name" : ""} x=${cx} y=${cy + 4}>${a.name?.trim() || this.t(`out_${a.type}` as I18nKey)}</text>`
+          : nothing}
       </g>`;
     })}</g>`;
   }
 
   private renderOutdoorForm(a: OutdoorArea) {
     const admin = this.isAdmin;
+    const areas = Object.values(this.hass?.areas ?? {}).sort((x, y) => x.name.localeCompare(y.name));
     const rect = isAxisRect(a.points);
     const b = bounds(a.points);
     const setRect = (field: "x" | "z" | "w" | "d", v: number) => {
@@ -5746,9 +5749,27 @@ export class Fp3dEditor extends LitElement {
       <div class="fp3d-h3row"><h3>${this.t("outdoor")}</h3>${this.fixButton("outdoor", a.id)}</div>
       <div class="fp3d-form">
         <label class="fp3d-field fp3d-wide"
+          >${this.t("room_name")}
+          <input .value=${a.name ?? ""} ?disabled=${!admin} @change=${(e: Event) => this.updateOutdoor({ name: (e.target as HTMLInputElement).value })}
+        /></label>
+        <label class="fp3d-field fp3d-wide"
           >${this.t("outdoor_type")}
           <select ?disabled=${!admin} @change=${(e: Event) => this.updateOutdoor({ type: (e.target as HTMLSelectElement).value as OutdoorType })}>
             ${OUTDOOR_TYPES.map((t) => html`<option value=${t} ?selected=${t === a.type}>${this.t(`out_${t}` as I18nKey)}</option>`)}
+          </select></label
+        >
+        <label class="fp3d-field fp3d-wide" title=${this.t("outdoor_area_hint")}
+          >${this.t("area")}
+          <select
+            ?disabled=${!admin}
+            @change=${(e: Event) => {
+              const areaId = (e.target as HTMLSelectElement).value || null;
+              const picked = areas.find((area) => area.area_id === areaId);
+              this.updateOutdoor({ area_id: areaId, ...(!a.name?.trim() && picked ? { name: picked.name } : {}) });
+            }}
+          >
+            <option value="" ?selected=${!a.area_id}>${this.t("no_area")}</option>
+            ${areas.map((area) => html`<option value=${area.area_id} ?selected=${area.area_id === a.area_id}>${area.name}</option>`)}
           </select></label
         >
         ${rect

@@ -88,6 +88,8 @@ export interface FloorGeometry {
   wallBuckets: number[];
   /** Triangle ranges of furniture in `walls`, for tapping furniture in 3D. */
   furnitureTris: { id: string; start: number; end: number }[];
+  /** Triangle ranges of linked outdoor areas in `walls`, for tapping a garden. */
+  outdoorTris: { id: string; start: number; end: number }[];
   /** Under roof slopes: the roof's underside above a plan point, in floor coordinates (null = no roof there). */
   roofUnder?: (x: number, z: number) => number | null;
 }
@@ -366,7 +368,8 @@ export function buildFloorGeometry(
   // ---------------------------------------------------------------- furniture and shadows
   const shadow = buildShadow(outline.edges, floor.rooms, spans);
   const waterBuf = new GeoBuffer();
-  pushOutdoor(wallBuf, lines, floor, waterBuf);
+  const outdoorTris: FloorGeometry["outdoorTris"] = [];
+  pushOutdoor(wallBuf, lines, floor, waterBuf, outdoorTris);
   for (const s of solar) pushModules(wallBuf, lines, s.face, s.field, floor.elevation);
 
   // lamps are drawn live by the viewer (they glow with their light)
@@ -399,6 +402,7 @@ export function buildFloorGeometry(
     openRooms,
     wallBuckets: walls.map((w) => wallBucket.get(w)!),
     furnitureTris,
+    outdoorTris,
     roofUnder,
   };
 }

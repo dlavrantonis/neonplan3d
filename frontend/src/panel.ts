@@ -9,6 +9,7 @@ import "./components/room-panel.ts";
 import "./components/view3d.ts";
 import { languageReady, loadLanguage, translate, type I18nKey } from "./i18n.ts";
 import type { Building } from "./model.ts";
+import { linkedOutdoor, outdoorLabel, planTarget } from "./plan-room.ts";
 import { controls, tokens } from "./styles.ts";
 import type { HomeAssistant } from "./types.ts";
 import type { MarkerMode } from "./components/view3d.ts";
@@ -784,6 +785,7 @@ export class Floorplan3dPanel extends LitElement {
     const floor = b.floors.find((f) => f.id === this._floorId);
     const roomFloors = floor ? [floor] : b.floors;
     const tt = this.tt.active;
+    const open = this._roomId ? planTarget(b, this.tt.hass(this.hass), this._roomId) : null;
     return html`
       ${this._clean ? nothing : html`<nav class="fp3d-nav ${this._navWrap ? "fp3d-nav-wrap" : ""}" @wheel=${this.onNavWheel}>
         ${b.floors.length > 1
@@ -823,6 +825,21 @@ export class Floorplan3dPanel extends LitElement {
               ${r.name}
             </button>`,
           ),
+          ...linkedOutdoor(f).map((a) => {
+            const name = outdoorLabel(this.hass, a);
+            return name
+              ? html`<button
+              class="fp3d-chip fp3d-room-chip"
+              aria-pressed=${a.id === this._roomId}
+              @click=${() => {
+                if (b.floors.length > 1) this._floorId = f.id;
+                this._roomId = a.id === this._roomId ? null : a.id;
+              }}
+            >
+              ${name}
+            </button>`
+              : nothing;
+          }),
         ])}
         <button
           class="fp3d-chip fp3d-nav-toggle"
@@ -891,8 +908,8 @@ export class Floorplan3dPanel extends LitElement {
               @camera-look=${(e: CustomEvent<{ entity: string }>) => this.view3d()?.lookThrough(e.detail.entity)}
               .hass=${this.tt.hass(this.hass)}
               ?readOnly=${tt}
-              .room=${b.floors.flatMap((f) => f.rooms).find((r) => r.id === this._roomId) ?? null}
-              .floor=${b.floors.find((f) => f.rooms.some((r) => r.id === this._roomId)) ?? null}
+              .room=${open?.room ?? null}
+              .floor=${open?.floor ?? null}
               .building=${b}
               .confirmEntities=${confirmEntities(this.hass, b.floors)}
               @close=${() => (this._roomId = null)}

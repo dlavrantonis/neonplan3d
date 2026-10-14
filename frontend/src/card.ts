@@ -1,6 +1,7 @@
 // Lovelace card (loaded automatically by the integration, no resource needed).
 
 import { confirmEntities } from "./devices.ts";
+import { planTarget } from "./plan-room.ts";
 import { countView } from "./diagnostics.ts";
 import { css, html, LitElement, nothing, type PropertyValues } from "lit";
 import { BuildingController } from "./building-controller.ts";
@@ -392,8 +393,8 @@ clearTimeout(this.cleanTimer);
               class="fp3d-card-panel"
               .hass=${this.tt.hass(this.hass)}
               ?readOnly=${tt}
-              .room=${b.floors.flatMap((f) => f.rooms).find((r) => r.id === this._roomId) ?? null}
-              .floor=${b.floors.find((f) => f.rooms.some((r) => r.id === this._roomId)) ?? null}
+              .room=${planTarget(b, this.tt.hass(this.hass), this._roomId)?.room ?? null}
+              .floor=${planTarget(b, this.tt.hass(this.hass), this._roomId)?.floor ?? null}
               .building=${b}
               .confirmEntities=${confirmEntities(this.hass, b.floors)}
               @close=${() => (this._roomId = null)}

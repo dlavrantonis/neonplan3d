@@ -1,11 +1,12 @@
 // Turns placements and entity states into device markers for the 3D view, and formats short state
 // texts shared by markers and the room panel.
 
-import { defaultHeight, entityName, isActive, isUnavailable, kindOf, lightGlow, tempUnit } from "./devices.ts";
+import { autoPlace, defaultHeight, entityName, isActive, isUnavailable, kindOf, lightGlow, tempUnit } from "./devices.ts";
 import { formatNumber, translate, type I18nKey } from "./i18n.ts";
 import { iconSvg, mdiIcon } from "./icons.ts";
-import type { Building } from "./model.ts";
+import type { Building, Floor } from "./model.ts";
 import { pointInPolygon } from "./model.ts";
+import { linkedOutdoor, outdoorDeviceIds } from "./plan-room.ts";
 import type { HassEntity, HomeAssistant } from "./types.ts";
 import type { DeviceMarker } from "./viewer/viewer3d.ts";
 
@@ -62,20 +63,33 @@ function translateState(hass: HomeAssistant | undefined, state: string): string 
   return s === key ? state : s;
 }
 
-/** Markers for every placed entity that still exists. */
+/** The room a point sits in, else a linked outdoor area (a garden). */
+function plotAt(floor: Floor, x: number, z: number): { id: string; areaId: string | null } | null {
+  const room = floor.rooms.find((r) => r.points.length >= 3 && pointInPolygon([x, z], r.points));
+  if (room) return { id: room.id, areaId: room.area_id };
+  const outdoor = linkedOutdoor(floor).find((a) => pointInPolygon([x, z], a.points));
+  return outdoor ? { id: outdoor.id, areaId: outdoor.area_id ?? null } : null;
+}
+
+/** Markers for every placed entity that still exists, plus the devices of linked outdoor areas. */
 export function buildMarkers(hass: HomeAssistant, building: Building): DeviceMarker[] {
   const out: DeviceMarker[] = [];
+  const placed = new Set<string>();
+  for (const floor of building.floors) {
+    for (const pl of floor.placements) placed.add(pl.entity_id);
+    for (const item of floor.furniture) if (item.entity) placed.add(item.entity);
+  }
   for (const floor of building.floors) {
     for (const pl of floor.placements) {
       const kind = kindOf(pl.entity_id);
       const st = hass.states[pl.entity_id];
       if (!kind || !st) continue;
-      const room = floor.rooms.find((r) => r.points.length >= 3 && pointInPolygon([pl.x, pl.z], r.points)) ?? null;
-      const areaName = room?.area_id ? hass.areas?.[room.area_id]?.name : undefined;
+      const plot = plotAt(floor, pl.x, pl.z);
+      const areaName = plot?.areaId ? hass.areas?.[plot.areaId]?.name : undefined;
       out.push({
         id: pl.entity_id,
         floorId: floor.id,
-        roomId: room?.id ?? null,
+        roomId: plot?.id ?? null,
         x: pl.x,
         z: pl.z,
         y: pl.y ?? defaultHeight(kind, floor.height, pl.mount ?? null),
@@ -98,6 +112,33 @@ export function buildMarkers(hass: HomeAssistant, building: Building): DeviceMar
         show: pl.marker ?? undefined,
         fixed: !!pl.locked,
       });
+    }
+    for (const area of linkedOutdoor(floor)) {
+      const ids = outdoorDeviceIds(hass, area.area_id ?? null).filter((id) => !placed.has(id));
+      const areaName = area.area_id ? hass.areas?.[area.area_id]?.name : undefined;
+      const room = { id: area.id, name: areaName ?? "", area_id: area.area_id ?? null, points: area.points, floor_material: "stone" };
+      for (const pl of autoPlace(room, ids)) {
+        const kind = kindOf(pl.entity_id);
+        const st = hass.states[pl.entity_id];
+        if (!kind || !st) continue;
+        placed.add(pl.entity_id);
+        out.push({
+          id: pl.entity_id,
+          floorId: floor.id,
+          roomId: area.id,
+          x: pl.x,
+          z: pl.z,
+          // a garden has no ceiling: a light stands in the plot instead of hanging over it
+          y: kind === "light" ? 1.2 : defaultHeight(kind, floor.height, null),
+          lamp: null,
+          icon: iconSvg(kind),
+          name: entityName(hass, pl.entity_id, areaName),
+          text: stateText(hass, st),
+          active: isActive(st),
+          unavailable: isUnavailable(st),
+          glow: kind === "light" ? scaleGlow(lightGlow(st), null) : null,
+        });
+      }
     }
   }
   return out;
