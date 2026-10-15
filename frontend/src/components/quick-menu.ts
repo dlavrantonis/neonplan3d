@@ -3,6 +3,7 @@
 
 import { css, html, LitElement, nothing } from "lit";
 import { type CarState, entityName, isUnavailable, kindOf } from "../devices.ts";
+import "./cam-still.ts";
 import { hasFeature } from "../features.ts";
 import { translate, type I18nKey } from "../i18n.ts";
 import { openMoreInfo, stateText } from "../markers.ts";
@@ -47,7 +48,6 @@ export class Fp3dQuickMenu extends LitElement {
     confirmSwitch: { type: Boolean },
     pro: { type: Boolean },
     low: { type: Boolean, reflect: true },
-    _tick: { state: true },
   };
 
   declare hass: HomeAssistant;
@@ -62,30 +62,17 @@ export class Fp3dQuickMenu extends LitElement {
   declare pro: boolean;
   /** Tablet level: no blur behind the menu. */
   declare low: boolean;
-  /** Bumped every few seconds while a camera menu is open, so its snapshot refreshes. */
-  private declare _tick: number;
-  private tickTimer: ReturnType<typeof setInterval> | undefined;
 
-  connectedCallback(): void {
-    super.connectedCallback();
-    this._tick = 0;
-    this.tickTimer = setInterval(() => {
-      if (kindOf(this.entity) === "camera" && !document.hidden) this._tick++;
-    }, 3000);
-  }
-
-  disconnectedCallback(): void {
-    super.disconnectedCallback();
-    clearInterval(this.tickTimer);
-  }
-
-  /** Snapshot of a camera, refreshed while the menu is open; a tap opens the live view. */
+  /** Snapshot of a camera. Play and fullscreen live on the shared still. */
   private renderCamera(st: HassEntity) {
     const picture = st.attributes.entity_picture as string | undefined;
-    const src = picture ? (picture.startsWith("data:") ? picture : `${picture}${picture.includes("?") ? "&" : "?"}fp3d=${this._tick}`) : null;
-    return html`<button class="qm-camera" title=${this.t("camera_live")} @click=${() => this.details()}>
-        ${src ? html`<img src=${src} alt=${entityName(this.hass, this.entity)} />` : html`<span class="qm-note">${stateText(this.hass, st)}</span>`}
-      </button>
+    return html`<fp3d-cam-still
+        .hass=${this.hass}
+        .entity=${this.entity}
+        .picture=${picture}
+        .note=${picture ? "" : stateText(this.hass, st)}
+        .alt=${entityName(this.hass, this.entity)}
+      ></fp3d-cam-still>
       <button class="qm-details qm-look" @click=${() => this.dispatchEvent(new CustomEvent("camera-look", { detail: { entity: this.entity }, bubbles: true, composed: true }))}>
         ${this.pro ? "" : "🔒 "}${this.t("through_camera")}
       </button>`;
@@ -349,7 +336,7 @@ export class Fp3dQuickMenu extends LitElement {
     return html`<div class="qm" role="dialog" aria-label=${entityName(this.hass, this.entity)}>
       <div class="qm-title">${entityName(this.hass, this.entity)}</div>
       ${body}
-      <button class="qm-details" @click=${() => this.details()}>${this.t("details")} …</button>
+      ${kind === "camera" ? nothing : html`<button class="qm-details" @click=${() => this.details()}>${this.t("details")} …</button>`}
     </div>`;
   }
 
@@ -384,24 +371,7 @@ export class Fp3dQuickMenu extends LitElement {
       border-color: var(--fp3d-accent, #37e0ff);
       color: var(--fp3d-accent, #37e0ff);
     }
-      .qm-camera {
-        display: block;
-        width: 100%;
-        padding: 0;
-        margin: 6px 0 8px;
-        border: 0;
-        border-radius: 12px;
-        overflow: hidden;
-        background: #000;
-        cursor: pointer;
-      }
-      .qm-camera img {
-        display: block;
-        width: 100%;
-        aspect-ratio: 16 / 9;
-        object-fit: cover;
-      }
-      .qm:has(.qm-camera) {
+      .qm:has(fp3d-cam-still) {
         width: 300px;
       }
       .qm {

@@ -2,6 +2,7 @@
 // scenes and scripts). Shown next to the 3D view when a room is selected.
 
 import { css, html, LitElement, nothing, type TemplateResult } from "lit";
+import "./cam-still.ts";
 import { areaEntities, entityName, groupByDevice, isUnavailable, kindOf, roomClimateSensors, roomClimateValue, roomPanelEntities, fromCelsius, tempUnit, type DeviceKind } from "../devices.ts";
 import { formatNumber, translate, type I18nKey } from "../i18n.ts";
 import { hasFeature } from "../features.ts";
@@ -13,7 +14,6 @@ import { controls, tokens } from "../styles.ts";
 import type { HassEntity, HomeAssistant } from "../types.ts";
 
 const COVER_SET_POSITION = 4;
-const CAMERA_REFRESH_MS = 3000;
 const COVER_STOP = 8;
 
 /** Colour presets offered for colour lights (warm white first). */
@@ -50,7 +50,6 @@ export class Fp3dRoomPanel extends LitElement {
     confirmEntities: { attribute: false },
     readOnly: { type: Boolean },
     _showAll: { state: true },
-    _tick: { state: true },
   };
 
   declare hass: HomeAssistant;
@@ -65,11 +64,7 @@ export class Fp3dRoomPanel extends LitElement {
   declare readOnly: boolean;
   /** Show the other devices of the area as well (their main entities). */
   private declare _showAll: boolean;
-  /** Bumped every few seconds while the panel is open, so camera snapshots refresh. */
-  private declare _tick: number;
-  private cameraTimer: ReturnType<typeof setInterval> | undefined;
   private memo: { entities: HomeAssistant["entities"]; floor: Floor | null; building: Building | null; room: Room; shown: string[]; more: string[] } | null = null;
-  private hasCameras = false;
 
   constructor() {
     super();
@@ -78,20 +73,6 @@ export class Fp3dRoomPanel extends LitElement {
     this.building = null;
     this.readOnly = false;
     this._showAll = false;
-    this._tick = 0;
-  }
-
-  connectedCallback(): void {
-    super.connectedCallback();
-    // snapshots every few seconds are much lighter for a wall tablet than a permanent stream
-    this.cameraTimer = setInterval(() => {
-      if (this.hasCameras && !document.hidden) this._tick++;
-    }, CAMERA_REFRESH_MS);
-  }
-
-  disconnectedCallback(): void {
-    super.disconnectedCallback();
-    clearInterval(this.cameraTimer);
   }
 
   private t(key: I18nKey, vars?: Record<string, string | number>): string {
@@ -164,7 +145,6 @@ export class Fp3dRoomPanel extends LitElement {
     const switches = by(["switch", "fan", "lock"]);
     const sensors = by(["sensor", "binary"]);
     const cameras = by(["camera"]);
-    this.hasCameras = cameras.length > 0;
     const scenes = by(["scene", "script"]);
     const facts = this.facts(climates);
     const lightsOn = lights.filter((l) => l.state === "on");
@@ -477,27 +457,23 @@ export class Fp3dRoomPanel extends LitElement {
     </div>`;
   }
 
-  /** Camera snapshot (refreshed while the panel is open); a tap opens the live view of Home Assistant. */
+  /** Camera snapshot. Play starts WebRTC; fullscreen grows this picture. */
   private cameraTile(st: HassEntity) {
+    const id = st.entity_id;
     const picture = st.attributes.entity_picture as string | undefined;
-    // a changing query parameter makes the browser fetch a fresh snapshot (not for inline pictures)
-    const src = picture && !isUnavailable(st) ? (picture.startsWith("data:") ? picture : `${picture}${picture.includes("?") ? "&" : "?"}fp3d=${this._tick}`) : null;
-    const placed = this.floor?.placements.some((p) => p.entity_id === st.entity_id);
-    return html`<div class="fp3d-rp-camera-wrap">
-      <button class="fp3d-rp-camera" title=${this.t("camera_live")} @click=${() => !this.readOnly && openMoreInfo(this, st.entity_id)}>
-        ${src ? html`<img src=${src} alt=${this.name(st.entity_id)} loading="lazy" />` : html`<span class="fp3d-rp-note">${stateText(this.hass, st)}</span>`}
-        <span class="fp3d-rp-camera-name">${this.name(st.entity_id)}</span>
-      </button>
-      ${placed
-        ? html`<button
-            class="fp3d-rp-look"
-            title=${this.t("through_camera")}
-            @click=${() => this.dispatchEvent(new CustomEvent("camera-look", { detail: { entity: st.entity_id }, bubbles: true, composed: true }))}
-          >
-            ${hasFeature("camera_cockpit") ? "" : "🔒 "}${this.t("through_camera")}
-          </button>`
-        : nothing}
-    </div>`;
+    const placed = this.floor?.placements.some((p) => p.entity_id === id);
+    const name = this.name(id);
+    return html`<fp3d-cam-still
+      .hass=${this.hass}
+      .entity=${id}
+      .picture=${picture && !isUnavailable(st) ? picture : undefined}
+      .note=${stateText(this.hass, st)}
+      .label=${name}
+      .alt=${name}
+      .look=${placed ? `${hasFeature("camera_cockpit") ? "" : "🔒 "}${this.t("through_camera")}` : ""}
+      ?readOnly=${this.readOnly}
+      @look=${() => this.dispatchEvent(new CustomEvent("camera-look", { detail: { entity: id }, bubbles: true, composed: true }))}
+    ></fp3d-cam-still>`;
   }
 
   private sensorRow(st: HassEntity) {
@@ -729,53 +705,6 @@ export class Fp3dRoomPanel extends LitElement {
         background: var(--c);
         box-shadow: 0 0 10px var(--c);
         cursor: pointer;
-      }
-      .fp3d-rp-camera {
-        position: relative;
-        display: block;
-        width: 100%;
-        aspect-ratio: 16 / 9;
-        margin: 6px 0;
-        padding: 0;
-        border: 1px solid var(--fp3d-line);
-        border-radius: 12px;
-        overflow: hidden;
-        background: #05080f;
-        cursor: pointer;
-      }
-      .fp3d-rp-camera img {
-        width: 100%;
-        height: 100%;
-        object-fit: cover;
-        display: block;
-      }
-      .fp3d-rp-camera-wrap {
-        position: relative;
-      }
-      .fp3d-rp-look {
-        position: absolute;
-        right: 8px;
-        bottom: 12px;
-        padding: 4px 10px;
-        border: 1px solid var(--fp3d-line);
-        border-radius: 999px;
-        background: rgba(7, 11, 20, 0.8);
-        color: var(--fp3d-accent);
-        font: inherit;
-        font-size: 12px;
-        font-weight: 600;
-        cursor: pointer;
-      }
-      .fp3d-rp-camera-name {
-        position: absolute;
-        left: 8px;
-        bottom: 6px;
-        padding: 2px 8px;
-        border-radius: 8px;
-        background: rgba(7, 11, 20, 0.75);
-        color: var(--fp3d-text);
-        font-size: 12px;
-        font-weight: 600;
       }
       .fp3d-rp-more {
         justify-self: start;
