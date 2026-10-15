@@ -23,6 +23,7 @@ export class Fp3dCamStill extends LitElement {
     _connecting: { state: true },
     _muted: { state: true },
     _volume: { state: true },
+    _audio: { state: true },
     _fs: { state: true },
   };
 
@@ -44,6 +45,8 @@ export class Fp3dCamStill extends LitElement {
   private declare _muted: boolean;
   /** Playback level while live, 0–1. Kept when muted, so unmute returns to it. */
   private declare _volume: number;
+  /** The live picture has an audio track that is actually sending. */
+  private declare _audio: boolean;
   /** The frame fills the screen (the browser's fullscreen, or a full-viewport cover when that is refused). */
   private declare _fs: boolean;
   private timer: ReturnType<typeof setInterval> | undefined;
@@ -73,6 +76,7 @@ export class Fp3dCamStill extends LitElement {
     this._connecting = false;
     this._muted = true;
     this._volume = 1;
+    this._audio = false;
     this._fs = false;
   }
 
@@ -82,6 +86,7 @@ export class Fp3dCamStill extends LitElement {
     this._connecting = false;
     this._muted = true;
     this._volume = 1;
+    this._audio = false;
     this._fs = false;
     document.addEventListener("keydown", this.onKey);
     document.addEventListener("fullscreenchange", this.onFullscreen);
@@ -108,6 +113,7 @@ export class Fp3dCamStill extends LitElement {
       this._connecting = false;
       this._muted = true;
       this._volume = 1;
+      this._audio = false;
     }
   }
 
@@ -131,11 +137,13 @@ export class Fp3dCamStill extends LitElement {
       this._connecting = false;
       this._muted = true;
       this._volume = 1;
+      this._audio = false;
       this._tick++;
       return;
     }
     this._muted = true;
     this._volume = 1;
+    this._audio = false;
     this._connecting = true;
     this._live = true;
   }
@@ -146,17 +154,21 @@ export class Fp3dCamStill extends LitElement {
   }
 
   /**
-   * Mute the picture without telling the player it is muted before the audio track arrives.
-   * ha-web-rtc-player throws that track away while its muted flag is on, and then unmute can never bring it back.
+   * Mute only after a picture is on screen. Doing it earlier makes ha-web-rtc-player
+   * throw away the audio track, and an AudioContext on the same stream stops the picture.
    */
   private syncSound(): void {
     const player = this.renderRoot.querySelector("ha-web-rtc-player") as (HTMLElement & { muted?: boolean }) | null;
     const video = player?.shadowRoot?.querySelector("video");
-    if (!video) return;
+    if (!video || this._connecting) return;
+    const stream = video.srcObject;
+    const audible = stream instanceof MediaStream && stream.getAudioTracks().some((track) => track.readyState === "live");
+    if (audible !== this._audio) this._audio = audible;
+    if (!audible) return;
     video.muted = this._muted;
     video.volume = this._volume;
-    const stream = video.srcObject;
-    if (player && stream instanceof MediaStream && stream.getAudioTracks().length) player.muted = this._muted;
+    if (player && player.muted !== this._muted) player.muted = this._muted;
+    if (video.paused) void video.play().catch(() => undefined);
   }
 
   private toggleMute(): void {
@@ -247,7 +259,7 @@ export class Fp3dCamStill extends LitElement {
           <button class="btn" title=${this.t(live ? "camera_stop" : "camera_play")} aria-label=${this.t(live ? "camera_stop" : "camera_play")} @click=${() => this.play()}>
             <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d=${live ? "M6 5h4v14H6zm8 0h4v14h-4z" : "M8 5v14l11-7z"} /></svg>
           </button>
-          ${live
+          ${live && this._audio && !this._connecting
             ? html`<button class="btn" title=${this.t(this._muted ? "camera_unmute" : "camera_mute")} aria-label=${this.t(this._muted ? "camera_unmute" : "camera_mute")} aria-pressed=${this._muted ? "true" : "false"} @click=${() => this.toggleMute()}>
               <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d=${this._muted ? ICON_MUTED : ICON_SOUND} /></svg>
             </button>
