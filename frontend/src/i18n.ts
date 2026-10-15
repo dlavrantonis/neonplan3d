@@ -4,6 +4,8 @@ import type { HomeAssistant } from "./types.ts";
 
 const de = {
   view: "3D",
+  view_lock: "3D-Sperre",
+  view_lock_hint: "Der Blickwinkel bleibt fest. Ziehen verschiebt die Ansicht, Zoomen geht zum Zeiger.",
   editor: "Editor",
   all_floors: "Alle Etagen",
   no_building: "Noch kein Grundriss vorhanden.",
@@ -1853,6 +1855,8 @@ type Key = keyof typeof de;
 
 const en: Record<Key, string> = {
   view: "3D",
+  view_lock: "3D lock",
+  view_lock_hint: "The angle stays fixed. Drag moves the view, and zoom goes toward the pointer.",
   editor: "Editor",
   all_floors: "All floors",
   no_building: "No floor plan yet.",

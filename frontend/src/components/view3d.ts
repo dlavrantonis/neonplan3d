@@ -222,6 +222,7 @@ export class Fp3dView3d extends LitElement {
     panelOpen: { attribute: false },
     controlsRight: { attribute: false },
     keepView: { attribute: false },
+    angleLock: { attribute: false },
     alerts: { attribute: false },
     alertJump: { attribute: false },
     scenes: { attribute: false },
@@ -386,6 +387,8 @@ export class Fp3dView3d extends LitElement {
   declare controlsRight: boolean;
   /** Floor switches keep the camera (#191). */
   declare keepView: boolean;
+  /** The angle stays; only zooming moves the camera. */
+  declare angleLock: boolean;
   /** The stage is narrower than 700 px (smaller floor pictures, phone layout). */
   private declare _narrowStage: boolean;
   private resizeObs: ResizeObserver | null = null;
@@ -559,6 +562,7 @@ export class Fp3dView3d extends LitElement {
     this.panelOpen = false;
     this.controlsRight = false;
     this.keepView = false;
+    this.angleLock = false;
     this._narrowStage = false;
     this.alerts = true;
     this.alertJump = false;
@@ -706,6 +710,7 @@ export class Fp3dView3d extends LitElement {
       });
       this.viewer.setWallMode(this.wallMode);
       this.viewer.setKeepView(this.keepView);
+      this.viewer.setAngleLock(this.angleLock);
       this.viewer.setTheme(this.theme);
       this.viewer.setAccent(this.accent ?? null);
       this.viewer.setFurnishMode(this.furnish);
@@ -793,6 +798,10 @@ export class Fp3dView3d extends LitElement {
     if (changed.has("roomId") && (this.roomId || changed.get("roomId"))) v.selectRoom(this.roomId);
     if (changed.has("wallMode")) v.setWallMode(this.wallMode);
     if (changed.has("keepView")) v.setKeepView(this.keepView);
+    if (changed.has("angleLock")) {
+      v.setAngleLock(this.angleLock);
+      if (this.angleLock) this.stopWalk();
+    }
     if (changed.has("explode")) v.setExplode(this.explode);
     if (changed.has("keepRoof")) v.setKeepRoof(this.keepRoof);
     if (changed.has("floorStack")) v.setFloorStack(this.floorStack);
@@ -3230,7 +3239,7 @@ export class Fp3dView3d extends LitElement {
     countView("walk");
     const b = this.building;
     const v = this.viewer;
-    if (!b || !v || this._walk) return;
+    if (!b || !v || this._walk || this.angleLock) return;
     const withRooms = b.floors.filter((f) => f.rooms.some((r) => r.points.length >= 3));
     const byRoom = this.roomId ? withRooms.find((f) => f.rooms.some((r) => r.id === this.roomId)) : undefined;
     const floor = byRoom ?? withRooms.find((f) => f.id === this.floorId) ?? [...withRooms].sort((x, y) => Math.abs(x.elevation) - Math.abs(y.elevation))[0];
@@ -3285,7 +3294,7 @@ export class Fp3dView3d extends LitElement {
   }
 
   private renderWalk() {
-    if (!this.walkable || this.ro || !this.building || !this.hass) return nothing;
+    if (!this.walkable || this.ro || !this.building || !this.hass || this.angleLock) return nothing;
     const t = (k: I18nKey) => translate(this.hass, k);
     if (!this._walk)
       return html`<button class="fp3d-walk-btn" title=${t("walk_start")} aria-label=${t("walk_start")} @click=${() => void this.startWalk()}>

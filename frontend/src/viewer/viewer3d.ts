@@ -586,6 +586,8 @@ export class FloorplanViewer {
   /** Vehicles standing in parking spots (spot id -> pack item type); they join the floor geometry. */
   private parked = new Map<string, string>();
   private parkedSig = "";
+  /** The angle stays where the lock button left it. Dragging slides the view and zooming still moves it. */
+  private angleLocked = false;
   /** Slow automatic turn of the view (kiosk screensaver), in radians per second. */
   private orbitSpeed = 0;
   private orbitLast = 0;
@@ -706,6 +708,14 @@ export class FloorplanViewer {
     if (this.labelInset === px) return;
     this.labelInset = px;
     this.labelsDirty = true;
+    this.invalidate();
+  }
+
+  /** Keep the current angle. Dragging slides the view and zoom still works. Turning and flights do not. */
+  setAngleLock(on: boolean): void {
+    this.angleLocked = on;
+    this.controls.setAngleLock(on);
+    if (on) this.orbitLast = 0;
     this.invalidate();
   }
 
@@ -1542,7 +1552,7 @@ export class FloorplanViewer {
   }
 
   private makeControls(): OrbitControls {
-    return new OrbitControls(this.renderer.domElement, this.camera, {
+    const controls = new OrbitControls(this.renderer.domElement, this.camera, {
       change: () => this.invalidate(),
       tap: (x, y) => this.onTap(x, y),
       hold: (x, y) => this.onHold(x, y),
@@ -1561,6 +1571,8 @@ export class FloorplanViewer {
         else this.options.onBack?.();
       },
     });
+    controls.setAngleLock(this.angleLocked);
+    return controls;
   }
 
   private readonly onVisibility = () => {
@@ -3898,7 +3910,7 @@ export class FloorplanViewer {
     if (this.disposed) return;
     const dt = this.lastFrame ? Math.min(100, now - this.lastFrame) : 16;
     let orbiting = false;
-    if (this.orbitSpeed && !this.controls.active) {
+    if (this.orbitSpeed && !this.controls.active && !this.angleLocked) {
       if (this.orbitLast) this.controls.view.theta += (this.orbitSpeed * Math.min(100, now - this.orbitLast)) / 1000;
       this.orbitLast = now;
       orbiting = true;

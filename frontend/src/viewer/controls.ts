@@ -48,6 +48,8 @@ export class OrbitControls {
    * kept for furniture, the middle and right buttons turn the view instead of panning it; fingers are unchanged.
    */
   leftDragTurns = true;
+  /** The angle stays put. A drag slides the view, and the wheel or a pinch still zooms. */
+  angleLock = false;
 
   private pointers = new Map<number, { x: number; y: number; button: number; type: string }>();
   private velocity = { theta: 0, phi: 0 };
@@ -92,6 +94,14 @@ export class OrbitControls {
     return this.pointers.size > 0 || this.flight !== null;
   }
 
+  /** Freeze the angle where it is now, or let it turn again. A running flight stops. */
+  setAngleLock(on: boolean): void {
+    this.angleLock = on;
+    if (!on) return;
+    this.velocity = { theta: 0, phi: 0 };
+    this.flight = null;
+  }
+
   /** Apply the view to the camera. Returns true while inertia or a flight is running. */
   update(now: number): boolean {
     let active = false;
@@ -105,13 +115,19 @@ export class OrbitControls {
       this.view.phi = from.phi + (to.phi - from.phi) * k;
       if (t >= 1) this.flight = null;
       active = true;
-    } else if (this.pointers.size === 0 && (Math.abs(this.velocity.theta) > 1e-4 || Math.abs(this.velocity.phi) > 1e-4)) {
+    } else if (!this.angleLock && this.pointers.size === 0 && (Math.abs(this.velocity.theta) > 1e-4 || Math.abs(this.velocity.phi) > 1e-4)) {
       this.view.theta += this.velocity.theta;
       this.view.phi = clamp(this.view.phi + this.velocity.phi, MIN_PHI, MAX_PHI);
       this.velocity.theta *= 0.9;
       this.velocity.phi *= 0.9;
       active = true;
     }
+    this.placeCamera();
+    return active;
+  }
+
+  /** Put the camera where the orbit view says, so a zoom can see what the pointer is on. */
+  private placeCamera(): void {
     const { target, radius, theta, phi } = this.view;
     this.camera.position.set(
       target.x + radius * Math.sin(phi) * Math.sin(theta),
@@ -119,10 +135,11 @@ export class OrbitControls {
       target.z + radius * Math.sin(phi) * Math.cos(theta),
     );
     this.camera.lookAt(target);
-    return active;
+    this.camera.updateMatrixWorld();
   }
 
   flyTo(to: Partial<OrbitView>, duration = 700): void {
+    if (this.angleLock) return;
     const from = { ...this.view, target: this.view.target.clone() };
     // take the short way round
     let theta = to.theta ?? from.theta;
@@ -214,20 +231,22 @@ export class OrbitControls {
         return;
       }
       const mouse = p.type === "mouse";
-      if (mouse && !this.leftDragTurns && p.button === 0) {
-        p.x = e.clientX;
-        p.y = e.clientY;
-        return;
-      }
-      const pan = (p.button === 1 || p.button === 2 || e.shiftKey) && (this.leftDragTurns || !mouse);
-      if (pan) this.pan(dx, dy);
-      else {
-        const h = this.el.clientHeight || 1;
-        const dTheta = (-dx / h) * 3.2;
-        const dPhi = (-dy / h) * 2.4;
-        this.view.theta += dTheta;
-        this.view.phi = clamp(this.view.phi + dPhi, MIN_PHI, MAX_PHI);
-        this.velocity = { theta: dTheta, phi: dPhi };
+      if (this.angleLock) {
+        this.pan(dx, dy);
+        this.velocity = { theta: 0, phi: 0 };
+      } else if (mouse && !this.leftDragTurns && p.button === 0) {
+        // the editor's wall view keeps the left button for furniture
+      } else {
+        const pan = (p.button === 1 || p.button === 2 || e.shiftKey) && (this.leftDragTurns || !mouse);
+        if (pan) this.pan(dx, dy);
+        else {
+          const h = this.el.clientHeight || 1;
+          const dTheta = (-dx / h) * 3.2;
+          const dPhi = (-dy / h) * 2.4;
+          this.view.theta += dTheta;
+          this.view.phi = clamp(this.view.phi + dPhi, MIN_PHI, MAX_PHI);
+          this.velocity = { theta: dTheta, phi: dPhi };
+        }
       }
       p.x = e.clientX;
       p.y = e.clientY;
@@ -236,7 +255,7 @@ export class OrbitControls {
       p.y = e.clientY;
       const now = this.pinchState();
       if (this.pinch && now) {
-        this.zoom(this.pinch.dist / Math.max(1, now.dist));
+        this.zoomAt(this.pinch.dist / Math.max(1, now.dist), now.mid[0], now.mid[1]);
         this.pan(now.mid[0] - this.pinch.mid[0], now.mid[1] - this.pinch.mid[1]);
       }
       this.pinch = now;
@@ -284,12 +303,40 @@ export class OrbitControls {
   private onWheel(e: WheelEvent): void {
     e.preventDefault();
     this.flight = null;
-    this.zoom(Math.exp(e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0015)));
+    this.zoomAt(Math.exp(e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0015)), e.clientX, e.clientY);
     this.events.change();
   }
 
-  private zoom(factor: number): void {
-    this.view.radius = clamp(this.view.radius * factor, this.minRadius, this.maxRadius);
+  /**
+   * Zoom toward the pointer. The spot under it on the floor of the view walks to the centre by the same
+   * fraction the distance changes, so the view centres there as it comes closer (and backs away on zoom out).
+   */
+  private zoomAt(factor: number, clientX: number, clientY: number): void {
+    const hit = this.pointedAt(clientX, clientY);
+    const before = this.view.radius;
+    const next = clamp(before * factor, this.minRadius, this.maxRadius);
+    if (next === before) return;
+    this.view.radius = next;
+    if (!hit) return;
+    const reach = Math.max(before * 3, 8);
+    if (hit.distanceTo(this.view.target) > reach) hit.sub(this.view.target).setLength(reach).add(this.view.target);
+    this.view.target.lerp(hit, 1 - next / before);
+  }
+
+  /** Where the pointer meets the horizontal plane through the orbit target, in front of the camera. */
+  private pointedAt(clientX: number, clientY: number): Vector3 | null {
+    this.placeCamera();
+    const rect = this.el.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) return null;
+    const origin = this.camera.position.clone();
+    const dir = new Vector3(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1, 0.5)
+      .unproject(this.camera)
+      .sub(origin)
+      .normalize();
+    if (Math.abs(dir.y) < 1e-4) return null;
+    const t = (this.view.target.y - origin.y) / dir.y;
+    if (t <= 0) return null;
+    return origin.addScaledVector(dir, t);
   }
 
   private pan(dx: number, dy: number): void {
