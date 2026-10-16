@@ -106,7 +106,8 @@ function copyFonts() {
 // main 570 KB, 3D 770 KB and card editor 230 KB on 2026-10-14 for the awnings (five kinds) and their texts
 // main 590 KB, editor 820 KB, card editor 235 KB on 2026-10-15 for the household (bins, mailboxes, Haushalt Pro) and its texts
 // main 600 KB on 2026-10-15 for the camera live view, mute and volume
-const BUDGET = { "neonplan3d.js": 600 * 1024, "neonplan3d-fun.js": 40 * 1024, "neonplan3d-timetravel.js": 120 * 1024, "neonplan3d-3d.js": 770 * 1024, "neonplan3d-editor.js": 820 * 1024, "neonplan3d-card-editor.js": 235 * 1024 };
+// main 602 KB on 2026-10-16 for dragging the camera card
+const BUDGET = { "neonplan3d.js": 602 * 1024, "neonplan3d-fun.js": 40 * 1024, "neonplan3d-timetravel.js": 120 * 1024, "neonplan3d-3d.js": 770 * 1024, "neonplan3d-editor.js": 820 * 1024, "neonplan3d-card-editor.js": 235 * 1024 };
 
 copyFonts();
 if (watch) {

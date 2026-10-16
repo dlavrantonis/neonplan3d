@@ -247,7 +247,7 @@ export class Fp3dCamStill extends LitElement {
           ? html`<ha-web-rtc-player autoplay playsinline entityid=${this.entity} poster-url=${poster}></ha-web-rtc-player>
             ${this._connecting ? html`<div class="wait" role="status"><span></span></div>` : nothing}`
           : src
-            ? html`<img src=${src} alt=${this.alt || this.label} />`
+            ? html`<img src=${src} alt=${this.alt || this.label} draggable="false" />`
             : html`<span class="note">${this.note}</span>`}
         ${this.label ? html`<span class="name">${this.label}</span>` : nothing}
         ${this.look
@@ -277,7 +277,7 @@ export class Fp3dCamStill extends LitElement {
   static styles = css`
     :host { display: block; }
     .box { position: relative; margin: 6px 0 2px; border: 1px solid var(--fp3d-line); border-radius: 12px; overflow: hidden; background: #05080f; }
-    .box img, .box ha-web-rtc-player { display: block; width: 100%; height: 100%; aspect-ratio: 16/9; object-fit: cover; --video-max-height: none; }
+    .box img, .box ha-web-rtc-player { display: block; width: 100%; height: 100%; aspect-ratio: 16/9; object-fit: cover; --video-max-height: none; -webkit-user-drag: none; }
     .note { display: block; padding: 28px 8px; color: var(--fp3d-muted); font-size: 13px; text-align: center; }
     .name { position: absolute; left: 8px; bottom: 6px; padding: 2px 8px; border-radius: 8px; background: rgba(7, 11, 20, 0.75); color: var(--fp3d-text); font-size: 12px; font-weight: 600; }
     .look { position: absolute; right: 8px; bottom: 12px; padding: 4px 10px; border: 1px solid var(--fp3d-line); border-radius: 999px; background: rgba(7, 11, 20, 0.8); color: var(--fp3d-accent, #37e0ff); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }

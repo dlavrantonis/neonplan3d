@@ -48,6 +48,7 @@ export class Fp3dQuickMenu extends LitElement {
     confirmSwitch: { type: Boolean },
     pro: { type: Boolean },
     low: { type: Boolean, reflect: true },
+    movable: { type: Boolean, reflect: true },
   };
 
   declare hass: HomeAssistant;
@@ -62,6 +63,8 @@ export class Fp3dQuickMenu extends LitElement {
   declare pro: boolean;
   /** Tablet level: no blur behind the menu. */
   declare low: boolean;
+  /** The camera card can be dragged by its picture and title. */
+  declare movable: boolean;
 
   /** Snapshot of a camera. Play and fullscreen live on the shared still. */
   private renderCamera(st: HassEntity) {
@@ -371,6 +374,17 @@ export class Fp3dQuickMenu extends LitElement {
       border-color: var(--fp3d-accent, #37e0ff);
       color: var(--fp3d-accent, #37e0ff);
     }
+      :host([movable]) {
+        cursor: grab;
+        touch-action: none;
+        user-select: none;
+      }
+      :host([movable]:active) {
+        cursor: grabbing;
+      }
+      :host([movable]) :is(button, input) {
+        cursor: pointer;
+      }
       .qm:has(fp3d-cam-still) {
         width: 300px;
       }

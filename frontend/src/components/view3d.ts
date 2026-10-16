@@ -357,8 +357,14 @@ export class Fp3dView3d extends LitElement {
   private shownStartView: string | undefined;
   /** A running swipe on a lamp or blind: the value shown next to the finger. */
   private declare _swipe: { entity: string; kind: "light" | "cover"; start: number; value: number; x: number; y: number } | null;
-  /** Quick menu at a device (long press). */
-  private declare _menu: { entity: string; x: number; y: number; car?: CarState } | null;
+  /** Quick menu at a device (long press). `left`/`top` are set once a camera card has been dragged. */
+  private declare _menu: { entity: string; x: number; y: number; car?: CarState; left?: number; top?: number } | null;
+  /** Camera card: the pointer that is moving it, and where the card sat when the pointer went down. */
+  private menuDrag: { id: number; x: number; y: number; left: number; top: number } | null = null;
+  /** Stable listeners so a redraw while dragging does not drop the pointer. The press is caught on the way down, before a picture can take it. */
+  private readonly menuPointerDown = { handleEvent: (e: PointerEvent) => this.menuDown(e), capture: true as const };
+  private readonly menuPointerMove = (e: PointerEvent) => this.menuMove(e);
+  private readonly menuPointerUp = (e: PointerEvent) => this.menuUp(e);
   /** Looking through a camera: its live picture lies over the 3D view; `back` is the view to return to. */
   private declare _through: { entity: string; back: ReturnType<FloorplanViewer["getView"]> } | null;
   /** Camera wall: the camera shown big (null: all tiles). */
@@ -3717,24 +3723,79 @@ export class Fp3dView3d extends LitElement {
     </div>`;
   }
 
+  /** A press on a button, slider, or the fullscreen picture stays a press. The rest of a camera card can be dragged. */
+  private menuHeld(e: PointerEvent): boolean {
+    return e.composedPath().some((n) => {
+      if (!(n instanceof Element)) return false;
+      const tag = n.tagName;
+      return tag === "BUTTON" || tag === "INPUT" || tag === "A" || tag === "TEXTAREA" || n.hasAttribute("fs");
+    });
+  }
+
+  /** Grab the camera card (not its buttons) and move it. The place is kept, so a new still does not jump it back. */
+  private menuDown(e: PointerEvent): void {
+    const m = this._menu;
+    if (!m || e.button !== 0 || kindOf(m.entity) !== "camera" || this.menuHeld(e)) return;
+    const el = e.currentTarget;
+    if (!(el instanceof HTMLElement)) return;
+    this.menuDrag = { id: e.pointerId, x: e.clientX, y: e.clientY, left: el.offsetLeft, top: el.offsetTop };
+    el.setPointerCapture(e.pointerId);
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
+  private menuMove(e: PointerEvent): void {
+    const d = this.menuDrag;
+    if (!d || e.pointerId !== d.id) return;
+    const m = this._menu;
+    if (!m) {
+      this.menuDrag = null;
+      return;
+    }
+    const el = e.currentTarget;
+    if (!(el instanceof HTMLElement)) return;
+    const stage = el.offsetParent instanceof HTMLElement ? el.offsetParent : el.parentElement;
+    const w = stage?.clientWidth ?? 800;
+    const h = stage?.clientHeight ?? 600;
+    const cardW = el.offsetWidth || 320;
+    const cardH = el.offsetHeight || 260;
+    const left = Math.max(8, Math.min(Math.max(8, w - cardW - 8), d.left + (e.clientX - d.x)));
+    const top = Math.max(8, Math.min(Math.max(8, h - cardH - 8), d.top + (e.clientY - d.y)));
+    if (left === m.left && top === m.top) return;
+    this._menu = { ...m, left, top };
+  }
+
+  private menuUp(e: PointerEvent): void {
+    if (this.menuDrag?.id === e.pointerId) this.menuDrag = null;
+  }
+
   private renderMenu() {
     const m = this._menu;
     if (!m || !this.hass || this.ro) return nothing;
     const stage = this.renderRoot.querySelector(".fp3d-stage") as HTMLElement | null;
     const w = stage?.clientWidth ?? 800;
     const h = stage?.clientHeight ?? 600;
-    const left = Math.max(8, Math.min(w - 240, m.x - 116));
-    const top = Math.max(8, Math.min(h - 360, m.y - 170));
+    const camera = kindOf(m.entity) === "camera";
+    const menu = camera ? (this.renderRoot.querySelector("fp3d-quick-menu") as HTMLElement | null) : null;
+    const cardW = menu?.offsetWidth || 320;
+    const cardH = menu?.offsetHeight || 260;
+    const left = m.left != null ? Math.max(8, Math.min(Math.max(8, w - cardW - 8), m.left)) : Math.max(8, Math.min(w - 240, m.x - 116));
+    const top = m.top != null ? Math.max(8, Math.min(Math.max(8, h - cardH - 8), m.top)) : Math.max(8, Math.min(h - 360, m.y - 170));
     return html`<div class="fp3d-menu-backdrop" @click=${() => (this._menu = null)}></div>
       <fp3d-quick-menu
         style="left:${left}px;top:${top}px"
         ?low=${this._low}
+        ?movable=${camera}
         .hass=${this.hass}
         .entity=${m.entity}
         .car=${m.car ?? null}
         .presets=${hasFeature("sound") ? (this.building?.settings.media_presets ?? []) : []}
         ?confirmSwitch=${this.confirmSet.has(m.entity)}
         ?pro=${hasFeature("camera_cockpit")}
+        @pointerdown=${this.menuPointerDown}
+        @pointermove=${this.menuPointerMove}
+        @pointerup=${this.menuPointerUp}
+        @pointercancel=${this.menuPointerUp}
         @close=${() => (this._menu = null)}
         @camera-look=${(e: CustomEvent<{ entity: string }>) => this.lookThrough(e.detail.entity)}
       ></fp3d-quick-menu>`;
