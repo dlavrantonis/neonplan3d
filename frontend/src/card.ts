@@ -347,6 +347,7 @@ clearTimeout(this.cleanTimer);
               .floorThumbs=${this.thumbs}
               .roomLabels=${c?.room_names !== false}
               .controlsRight=${c?.controls_side === "right"}
+              .lockButton=${true}
               .keepView=${c?.keep_view === true}
               .floorStack=${c?.floor_stack ?? "dim"}
               .panelOpen=${!!this._roomId && c?.room_panel !== false}
@@ -370,7 +371,12 @@ clearTimeout(this.cleanTimer);
               .dimmed=${this._night}
               .autoOrbit=${this._orbit}
               .startView=${c?.start_view ?? null}
-              style=${tt ? `--fp3d-bottom-inset: ${bar ? "calc(52px + var(--fp3d-tt-h))" : "var(--fp3d-tt-h)"}` : bar ? "--fp3d-bottom-inset: 52px" : ""}
+              style=${[
+                tt ? `--fp3d-bottom-inset: ${bar ? "calc(52px + var(--fp3d-tt-h))" : "var(--fp3d-tt-h)"}` : bar ? "--fp3d-bottom-inset: 52px" : "",
+                this._roomId && c?.room_panel !== false ? "--fp3d-lock-right:392px" : "",
+              ]
+                .filter(Boolean)
+                .join(";")}
               @room-tap=${(e: CustomEvent<{ floorId: string; roomId: string | null }>) => {
                 // in the house view (or on another floor) a tap first opens the whole floor
                 if (this.canSwitch && (b?.floors.length ?? 0) > 1 && e.detail.floorId && floorId !== e.detail.floorId) {

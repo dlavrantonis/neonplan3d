@@ -223,6 +223,7 @@ export class Fp3dView3d extends LitElement {
     controlsRight: { attribute: false },
     keepView: { attribute: false },
     angleLock: { attribute: false },
+    lockButton: { attribute: false },
     alerts: { attribute: false },
     alertJump: { attribute: false },
     scenes: { attribute: false },
@@ -389,6 +390,8 @@ export class Fp3dView3d extends LitElement {
   declare keepView: boolean;
   /** The angle stays; only zooming moves the camera. */
   declare angleLock: boolean;
+  /** The 3D lock button (the dashboard card). Stays up when the other controls hide. */
+  declare lockButton: boolean;
   /** The stage is narrower than 700 px (smaller floor pictures, phone layout). */
   private declare _narrowStage: boolean;
   private resizeObs: ResizeObserver | null = null;
@@ -563,6 +566,7 @@ export class Fp3dView3d extends LitElement {
     this.controlsRight = false;
     this.keepView = false;
     this.angleLock = false;
+    this.lockButton = false;
     this._narrowStage = false;
     this.alerts = true;
     this.alertJump = false;
@@ -3494,6 +3498,14 @@ export class Fp3dView3d extends LitElement {
     return !isUnavailable(st) && (st.state === "playing" || (st.state === "paused" && label));
   }
 
+  /** Locks the viewing angle. Drag still moves the view, and zoom still goes toward the pointer. */
+  private renderLock() {
+    if (!this.lockButton || !this.hass || this._walk || this.furnish) return nothing;
+    const on = this.angleLock;
+    const label = translate(this.hass, "view_lock");
+    return html`<button class="fp3d-walk-btn fp3d-lock-btn" aria-pressed=${on} title=${translate(this.hass, "view_lock_hint")} aria-label=${label} @click=${() => (this.angleLock = !this.angleLock)}><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d=${iconPath("lock")} /></svg><span>${label}</span></button>`;
+  }
+
   /** The eye: one tap hides every bar and overlay so only the stage remains, the next brings them back. */
   private renderEye() {
     // while the search is open its field takes the eye's place (#220)
@@ -3903,7 +3915,7 @@ export class Fp3dView3d extends LitElement {
     >
       ${this._error ? html`<p class="fp3d-error">${this._error}</p>` : nothing} ${this.clean ? nothing : this.renderEnergy()} ${this.renderHologram()} ${this.clean ? nothing : this.renderLegend()}
       ${this.renderAlerts()} ${this.clean || this._walk ? nothing : html`${this.renderHousehold()} ${this.renderThumbs()} ${this.renderScenes()} ${this.renderFind()} ${this.renderCentral()}`} ${this.clean ? nothing : this.renderWalk()} ${this.renderSwipe()} ${this.renderInfo()} ${this.renderBinInfo()} ${this.renderThrough()} ${this.renderCameraWall()}
-      ${this.clean ? nothing : this.renderProHint()} ${this.renderMenu()} ${this.renderEye()}
+      ${this.clean ? nothing : this.renderProHint()} ${this.renderMenu()} ${this.renderLock()} ${this.renderEye()}
       ${this.showStats && this._stats
         ? html`<span class="fp3d-stats"
             ><b>${this._stats.fps ? translate(this.hass, "stats_fps", { fps: this._stats.fps, ms: this._stats.worstMs }) : translate(this.hass, "stats_idle")}</b>
@@ -4368,6 +4380,16 @@ export class Fp3dView3d extends LitElement {
       }
       .fp3d-thumbs-small .fp3d-thumb {
         width: 104px;
+      }
+      .fp3d-walk-btn.fp3d-lock-btn {
+        z-index: 6;
+        top: 58px;
+        right: var(--fp3d-lock-right, var(--fp3d-walk-right, 12px));
+      }
+      .fp3d-lock-btn[aria-pressed="true"] {
+        background: var(--fp3d-accent);
+        color: var(--fp3d-accent-text);
+        border-color: transparent;
       }
       /* at the top right, clear of the floor pictures and the switch rows (a card moves it beside its own buttons) */
       .fp3d-walk-btn {
@@ -5484,6 +5506,9 @@ export class Fp3dView3d extends LitElement {
       @container fp3d ((max-width: 700px) or ((orientation: portrait) and (max-width: 1000px))) {
         .fp3d-panel-open :is(.fp3d-find-btn, .fp3d-find, .fp3d-thumbs, .fp3d-legend, .fp3d-stats, .fp3d-scenes) {
           display: none;
+        }
+        .fp3d-panel-open .fp3d-walk-btn.fp3d-lock-btn {
+          right: var(--fp3d-walk-right, 12px);
         }
       }
       @media (pointer: coarse) {

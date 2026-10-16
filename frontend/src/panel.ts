@@ -77,7 +77,6 @@ export class Floorplan3dPanel extends LitElement {
     _roomNames: { state: true },
     _controlsRight: { state: true },
     _keepView: { state: true },
-    _angleLock: { state: true },
     _trail: { state: true },
     _cameraWall: { state: true },
     _clean: { state: true },
@@ -124,8 +123,6 @@ export class Floorplan3dPanel extends LitElement {
   private declare _roomNames: boolean;
   private declare _controlsRight: boolean;
   private declare _keepView: boolean;
-  /** The 3D view keeps its angle; only zooming still moves it. */
-  private declare _angleLock: boolean;
   /** Motion trail of the last half hour in 3D. */
   private declare _trail: boolean;
   private declare _cameraWall: boolean;
@@ -182,7 +179,6 @@ export class Floorplan3dPanel extends LitElement {
     this._roomNames = prefs.get("room_names") !== "0";
     this._controlsRight = prefs.get("controls") === "right";
     this._keepView = prefs.get("keep_view") === "1";
-    this._angleLock = false;
     this._trail = prefs.get("trail") === "1";
     this._cameraWall = false;
     this._clean = prefs.get("clean") === "1";
@@ -518,7 +514,6 @@ export class Floorplan3dPanel extends LitElement {
           ${this.isAdmin
             ? html`<div class="fp3d-seg" role="tablist">
                 <button role="tab" aria-pressed=${this._mode === "view"} @click=${() => this.setMode("view")}>${this.t("view")}</button>
-                <button type="button" aria-pressed=${this._angleLock} title=${this.t("view_lock_hint")} @click=${() => (this._angleLock = !this._angleLock)}>${this.t("view_lock")}</button>
                 <button role="tab" aria-pressed=${this._mode === "editor"} @click=${() => this.setMode("editor")}>${this.t("editor")}</button>
                 <button role="tab" class="fp3d-tab-ext" aria-pressed=${this._mode === "extensions"} @click=${() => this.setMode("extensions")}>
                   ✦ ${this.t("ext_tab")}${this._readyPacks
@@ -870,13 +865,14 @@ export class Floorplan3dPanel extends LitElement {
           .roomLabels=${this._roomNames}
           .controlsRight=${this._controlsRight}
           .keepView=${this._keepView}
-          .angleLock=${this._angleLock}
+          .lockButton=${true}
           ?trail=${this._trail}
           .cameraWall=${this._cameraWall && !tt}
           @camera-wall-close=${() => (this._cameraWall = false)}
           @camera-wall-open=${() => (this._cameraWall = true)}
           .clean=${this._clean}
           .cleanButton=${true}
+          style=${this._roomId ? "--fp3d-lock-right:392px" : ""}
           @clean-toggle=${() => {
             this._clean = !this._clean;
             prefs.set("clean", this._clean ? "1" : "0");
