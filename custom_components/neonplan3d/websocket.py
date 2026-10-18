@@ -14,7 +14,7 @@ from homeassistant.loader import async_get_integration
 import voluptuous as vol
 
 from . import license as lic
-from .const import DATA_DIAGNOSTICS, DOMAIN, SIGNAL_BUILDING_UPDATED
+from .const import DATA_BUNDLE, DATA_DIAGNOSTICS, DOMAIN, SIGNAL_BUILDING_UPDATED
 from .diagnostics_report import DiagnosticsError, DiagnosticsReporter
 from .packs import MAX_PACK_SIZE, PackError, parts_of, verify_pack
 from .schema import BUILDING_SCHEMA, IMAGE_DATA
@@ -69,14 +69,21 @@ async def ws_get_building(hass: HomeAssistant, connection: websocket_api.ActiveC
     """Return the building, its revision and the running integration version.
 
     The frontend compares the version with its own: after an update the new frontend files are served
-    at once, but the backend (and its validation) only changes with a restart.
+    at once, but the backend (and its validation) only changes with a restart. `bundle` is the token on
+    the script URL; a page that loaded a different one is a cached copy (the companion app) and reloads.
     """
     if (data := _data(hass, connection, msg)) is None:
         return
     integration = await async_get_integration(hass, DOMAIN)
-    connection.send_result(
-        msg["id"], {"building": data.building, "revision": data.revision, "version": str(integration.version)}
-    )
+    result: dict[str, Any] = {
+        "building": data.building,
+        "revision": data.revision,
+        "version": str(integration.version),
+    }
+    bundle = hass.data.get(DATA_BUNDLE)
+    if isinstance(bundle, str):
+        result["bundle"] = bundle
+    connection.send_result(msg["id"], result)
 
 
 @websocket_api.websocket_command(

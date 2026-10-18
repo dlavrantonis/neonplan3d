@@ -4,7 +4,7 @@ import type { Building } from "./model.ts";
 import type { FurniturePack } from "./packs.ts";
 import type { HomeAssistant } from "./types.ts";
 
-export async function fetchBuilding(hass: HomeAssistant): Promise<{ building: Building; revision: number; version?: string }> {
+export async function fetchBuilding(hass: HomeAssistant): Promise<{ building: Building; revision: number; version?: string; bundle?: string }> {
   return hass.callWS({ type: "neonplan3d/building/get" });
 }
 

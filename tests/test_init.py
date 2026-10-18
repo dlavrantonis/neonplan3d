@@ -100,6 +100,7 @@ async def test_save_and_get_building(hass: HomeAssistant, hass_ws_client) -> Non
     assert got["result"]["revision"] == 1
     assert got["result"]["building"]["floors"][0]["rooms"][0]["name"] == "Living"
     assert got["result"]["version"]
+    assert got["result"]["bundle"].startswith(f"{got['result']['version']}-")
 
 
 async def test_opening_fields_get_defaults(hass: HomeAssistant, hass_ws_client) -> None:

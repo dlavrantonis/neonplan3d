@@ -25,6 +25,7 @@ from .card_resource import (
     write_loader,
 )
 from .const import (
+    DATA_BUNDLE,
     DATA_DIAGNOSTICS,
     DOMAIN,
     MAIN_BUNDLE,
@@ -87,8 +88,10 @@ async def _async_main_url(hass: HomeAssistant) -> str:
         return url
     integration = await async_get_integration(hass, DOMAIN)
     digest = await hass.async_add_executor_job(_bundle_hash)
-    url = f"{URL_BASE}/{MAIN_BUNDLE}?v={integration.version}-{digest}"
+    token = f"{integration.version}-{digest}"
+    url = f"{URL_BASE}/{MAIN_BUNDLE}?v={token}"
     hass.data[_MAIN_URL] = url
+    hass.data[DATA_BUNDLE] = token
     return url
 
 

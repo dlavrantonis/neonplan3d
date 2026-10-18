@@ -2,6 +2,7 @@
 
 import type { ReactiveController, ReactiveControllerHost } from "lit";
 import { fetchBuilding, listPacks, saveBuilding, subscribeBuilding } from "./api.ts";
+import { bundleIsStale, loadedBundleToken, refreshAppCache } from "./cache-refresh.ts";
 import { initDiagnostics } from "./diagnostics.ts";
 import { normalizeBuilding, type Building } from "./model.ts";
 import { setPacks, type FurniturePack } from "./packs.ts";
@@ -54,6 +55,8 @@ export class BuildingController implements ReactiveController {
   saveError: string | null = null;
   /** Integration version the backend runs (differs from the frontend until Home Assistant restarts). */
   backendVersion: string | null = null;
+  /** Token of the bundle the backend is serving (`?v=`). A different one means this page is cached. */
+  backendBundle: string | null = null;
   /** Unsaved edits from an earlier session, offered for restoring. */
   draft: Draft | null = null;
   /** Imported furniture packs. */
@@ -206,8 +209,10 @@ export class BuildingController implements ReactiveController {
     if (!this.hass) return;
     try {
       const res = await fetchBuilding(this.hass);
-      this.building = normalizeBuilding(res.building);
       this.backendVersion = res.version ?? null;
+      this.backendBundle = res.bundle ?? null;
+      if (res.bundle && bundleIsStale(loadedBundleToken(), res.bundle)) void refreshAppCache(res.bundle);
+      this.building = normalizeBuilding(res.building);
       if (this.draft === null && !this.pending) this.draft = readDraft();
       this.revision = res.revision;
       this.error = null;

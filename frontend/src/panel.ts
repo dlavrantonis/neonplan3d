@@ -3,6 +3,7 @@
 import { formatImperial, lengthUnit, parseLength } from "./units.ts";
 import { css, html, LitElement, nothing, type PropertyValues } from "lit";
 import { BuildingController } from "./building-controller.ts";
+import { refreshAppCache } from "./cache-refresh.ts";
 import { countView } from "./diagnostics.ts";
 import { loadEditor } from "./load-editor.ts";
 import "./components/room-panel.ts";
@@ -718,7 +719,7 @@ export class Floorplan3dPanel extends LitElement {
         notices.push(
           html`<div class="fp3d-notice fp3d-notice-warn">
             ${this.t("needs_reload", { frontend: d.frontendVersion, backend: d.backendVersion ?? "?" })}
-            <button class="fp3d-btn" @click=${() => location.reload()}>${this.t("reload_page")}</button>
+            <button class="fp3d-btn" @click=${() => void refreshAppCache(d.backendBundle ?? d.backendVersion ?? "reload", true)}>${this.t("reload_page")}</button>
           </div>`,
         );
       else notices.push(html`<div class="fp3d-notice fp3d-notice-warn">${d.backendVersion ? this.t("needs_restart", { version: d.backendVersion, frontend: d.frontendVersion }) : this.t("needs_restart_old")}</div>`);

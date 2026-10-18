@@ -18,6 +18,8 @@ STORAGE_KEY_LICENSE = f"{DOMAIN}.license"
 STORAGE_KEY_DIAGNOSTICS = f"{DOMAIN}.diagnostics"
 # hass.data key of the reporter
 DATA_DIAGNOSTICS = f"{DOMAIN}_diagnostics"
+# hass.data: "1.20.1-<hash>" of the main bundle, the same token as ?v= on its URL
+DATA_BUNDLE = f"{DOMAIN}_bundle"
 
 # restore points: at most this many, and a new one only after this pause since the last one
 HISTORY_MAX = 20
