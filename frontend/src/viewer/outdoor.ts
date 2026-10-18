@@ -112,17 +112,10 @@ function pushBeam(buf: GeoBuffer, p: Vec2, q: Vec2, w: number, y0: number, y1: n
 }
 
 /** `water`: a pool's water surface goes there (drawn see-through, so the basin shows below it); without it into `buf`. */
-export function pushOutdoor(
-  buf: GeoBuffer,
-  lines: LineBuffer,
-  floor: Floor,
-  water?: GeoBuffer,
-  picked?: { id: string; start: number; end: number }[],
-): void {
+export function pushOutdoor(buf: GeoBuffer, lines: LineBuffer, floor: Floor, water?: GeoBuffer): void {
   const areas = floor.outdoor ?? [];
   areas.forEach((a, index) => {
     if (a.points.length < 3) return;
-    const triStart = buf.count;
     // an area may sit above or below the ground (a driveway down to a lower garage) and fall along one direction
     const g = areaGround(floor, a);
     const groundAt = (x: number, z: number) => g - groundDrop(floor, a, x, z);
@@ -327,7 +320,5 @@ export function pushOutdoor(
         }
       }
     }
-    // a linked area is tappable: its triangles in the wall buffer are the hit target
-    if (picked && a.area_id && buf.count > triStart) picked.push({ id: a.id, start: triStart, end: buf.count });
   });
 }

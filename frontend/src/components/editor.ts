@@ -24,6 +24,8 @@ import { BIN_SHAPES, BIN_SIZE, binColors, binShape, householdCountry, isPackPlan
 import { poolEntities, type PoolEntities } from "../pool.ts";
 import { nearestOnOutline, poolFlow, waterColor, type PoolDeviceType } from "../pool-flow.ts";
 import { cameraMotionSensors, detectionKind } from "../markers.ts";
+import { setVoiceHere, setVoicePipeline, voiceOnHere, voicePipeline } from "../load-voice.ts";
+import { doorbellCamera, doorbellEntities, directorOnHere, HOLD_DEFAULT, HOLD_MAX, HOLD_MIN, setDirectorHere, type DirectorSettings } from "../director.ts";
 import { deviceSensors, energySummary, flowSegments, gridPoint, powerSensorFor, proposeEnergySensors, type EnergyPrefs, type FlowSegment, proposeMeters } from "../energy.ts";
 import { CLIMATE_ATTRS, isStatusSensor, robotRoomSensor, TOGGLE_KINDS } from "../devices.ts";
 import { sectionFloor, dormerParent, effectiveDormer, proposeDormer, sectionGeometry, floorOutline, polygonBox, headroomLines, ridgeHeight, sectionCutsBelow, roofSectionsFromRooms, sectionFrame, wallTopUnder } from "../roof-sections.ts";
@@ -73,6 +75,7 @@ import {
   type CustomButton,
   type MediaPreset,
   outdoorStanding,
+  outdoorZones,
   SLOPE_DIRS,
   type SlopeDir,
   spotGrid,
@@ -128,7 +131,7 @@ import { deleteDiagnostics, getDiagnostics, setDiagnostics, type DiagnosticsStat
 import { load3d } from "../load3d.ts";
 import type { WallMode } from "../viewer/viewer3d.ts";
 import { furnitureName } from "../furniture-names.ts";
-import { furnitureSize, isElectric, isPackType, isRobotVacuum, mountBase, packDisplay, packItem, packItemName, packName, packType, setPacks, type FurniturePack } from "../packs.ts";
+import { furnitureSize, isElectric, isPackType, isRobotVacuum, mountBase, packDisplay, packItem, packItemName, packMotion, packName, packType, setPacks, type FurniturePack } from "../packs.ts";
 
 /** Items that can be fixed against moving. */
 type FixKind = "room" | "opening" | "furniture" | "device" | "wall" | "outdoor";
@@ -1082,6 +1085,18 @@ export class Fp3dEditor extends LitElement {
   }
 
   protected updated(): void {
+    // the item preview is placed in window coordinates; with the 3D view beside the plan an ancestor becomes its
+    // containing block (a transform or filter), so "fixed" no longer means the window: measure and correct once
+    const preview = this._preview ? this.renderRoot.querySelector<HTMLElement>(".fp3d-preview") : null;
+    if (preview && this._preview) {
+      const r = preview.getBoundingClientRect();
+      const dx = r.left - this._preview.left;
+      const dy = r.top - this._preview.top;
+      if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
+        preview.style.left = `${parseFloat(preview.style.left) - dx}px`;
+        preview.style.top = `${parseFloat(preview.style.top) - dy}px`;
+      }
+    }
     // ?selected only sets an option's selectedness until the user picks one in that select; after that a
     // reused <select> (another room, another item) would keep showing the old pick: follow the attribute
     for (const option of this.renderRoot.querySelectorAll<HTMLOptionElement>("select option[selected]")) {
@@ -2729,7 +2744,7 @@ export class Fp3dEditor extends LitElement {
     } else if (e.key.toLowerCase() === "l" && !mod && (this._furnitureId || this._deviceId)) {
       const s = this.selectedFix!;
       this.toggleFixed(s.kind, s.id);
-    } else if (Object.hasOwn(ARROWS, e.key) && !mod && (this._tool === "select" || this._tool === "furniture")) {
+    } else if (Object.prototype.hasOwnProperty.call(ARROWS, e.key) && !mod && (this._tool === "select" || this._tool === "furniture")) {
       // arrow keys nudge the selection: one grid step, Shift 10 cm, Alt 1 cm
       const step = e.altKey ? 0.01 : e.shiftKey ? 0.1 : this._doc.settings.grid;
       const [dx, dz] = ARROWS[e.key];
@@ -2848,7 +2863,8 @@ export class Fp3dEditor extends LitElement {
   /** Areas of a floor's Home Assistant floor that have no room in the plan yet. */
   private unplacedAreas(floor: Floor): HassArea[] {
     if (!floor.ha_floor) return [];
-    const used = new Set(this._doc.floors.flatMap((f) => [...f.rooms.map((r) => r.area_id), ...(f.outdoor ?? []).map((a) => a.area_id)]));
+    // an area that an outdoor area stands for (the garden) is placed too
+    const used = new Set(this._doc.floors.flatMap((f) => [...f.rooms.map((r) => r.area_id), ...(f.outdoor ?? []).map((a) => a.area_id ?? null)]));
     return Object.values(this.hass?.areas ?? {})
       .filter((a) => a.floor_id === floor.ha_floor && !used.has(a.area_id))
       .sort((a, b) => a.name.localeCompare(b.name));
@@ -4754,8 +4770,8 @@ export class Fp3dEditor extends LitElement {
   }
 
   /** Place entities in the selected room; an entity already placed elsewhere moves here. */
-  private placeDevices(entityIds: string[]): void {
-    const room = this.room;
+  private placeDevices(entityIds: string[], zone?: Room): void {
+    const room = zone ?? this.room;
     if (!room || !entityIds.length || !this.isAdmin) return;
     const ids = new Set(entityIds);
     this.change((doc, floor) => {
@@ -4765,7 +4781,8 @@ export class Fp3dEditor extends LitElement {
       }
       const taken = [...floor.placements.map((pl) => [pl.x, pl.z] as Vec2), ...floor.furniture.filter((m) => isLamp(m.type)).map((m) => [m.x, m.z] as Vec2)];
       for (const pl of autoPlace(room, entityIds, taken)) {
-        if (!pl.entity_id.startsWith("light.")) {
+        // outside (an outdoor area acting as a room) a light stays a pin: no ceiling lamp over the lawn
+        if (!pl.entity_id.startsWith("light.") || room.outdoor) {
           floor.placements.push(pl);
           continue;
         }
@@ -5756,16 +5773,80 @@ export class Fp3dEditor extends LitElement {
       const big = Math.min(b.x1 - b.x0, b.z1 - b.z0) * this._view.scale > 40;
       return svg`<g data-outdoor=${a.id} class=${`fp3d-out fp3d-out-${a.type}${a.id === this._outdoorId ? " fp3d-out-sel" : ""}`}>
         <polygon points=${pts} />
-        ${big
-          ? svg`<text class=${a.name?.trim() ? "fp3d-room-name" : ""} x=${cx} y=${cy + 4}>${a.name?.trim() || this.t(`out_${a.type}` as I18nKey)}</text>`
-          : nothing}
+        ${big ? svg`<text x=${cx} y=${cy + 4}>${this.t(`out_${a.type}` as I18nKey)}</text>` : nothing}
       </g>`;
     })}</g>`;
   }
 
-  private renderOutdoorForm(a: OutdoorArea) {
+  /** An outdoor area like a room (#100): a Home Assistant area (with its devices) and a name for chip and 3D. */
+  private renderOutdoorZone(a: OutdoorArea) {
     const admin = this.isAdmin;
     const areas = Object.values(this.hass?.areas ?? {}).sort((x, y) => x.name.localeCompare(y.name));
+    return html`<label class="fp3d-field fp3d-wide" title=${this.t("outdoor_area_hint")}
+        >${this.t("area")}
+        <select
+          ?disabled=${!admin}
+          @change=${(e: Event) => {
+            const id = (e.target as HTMLSelectElement).value || null;
+            // the area's name is a good first name for the garden or terrace
+            const name = (a.name ?? "").trim() || (id ? (this.hass?.areas?.[id]?.name ?? null) : null);
+            this.updateOutdoor({ area_id: id, name: id ? name : a.name ?? null });
+          }}
+        >
+          <option value="" ?selected=${!a.area_id}>${this.t("no_area")}</option>
+          ${areas.map((x) => html`<option value=${x.area_id} ?selected=${x.area_id === a.area_id}>${x.name}</option>`)}
+        </select></label
+      >
+      ${a.area_id
+        ? html`<label class="fp3d-field fp3d-wide"
+            >${this.t("room_name")}
+            <input .value=${a.name ?? ""} ?disabled=${!admin} @change=${(e: Event) => this.updateOutdoor({ name: (e.target as HTMLInputElement).value.trim() || null })}
+          /></label>`
+        : nothing}
+      <p class="fp3d-sub fp3d-wide">${this.t("outdoor_area_hint")}</p>
+      ${a.area_id ? this.renderOutdoorDevices(a) : nothing}`;
+  }
+
+  /** The devices of an outdoor area's Home Assistant area, to place on it like a room's (#100). */
+  private renderOutdoorDevices(a: OutdoorArea) {
+    const hass = this.hass;
+    const floor = this.floor;
+    const zone = floor ? outdoorZones(floor).find((z) => z.id === a.id) : undefined;
+    if (!hass || !floor || !zone) return nothing;
+    const areaName = zone.area_id ? hass.areas?.[zone.area_id]?.name : undefined;
+    const groups = groupByDevice(hass, areaEntities(hass, zone.area_id).filter((id) => isPlaceable(kindOf(id))));
+    // placed as a pin, or as a lamp (a path light, a garden spot) with this light
+    const placed = new Set([
+      ...floor.placements.filter((pl) => pointInPolygon([pl.x, pl.z], zone.points)).map((pl) => pl.entity_id),
+      ...floor.furniture.filter((m) => isLamp(m.type) && m.entity && pointInPolygon([m.x, m.z], zone.points)).map((m) => m.entity!),
+    ]);
+    const open = groups.map((g) => g.primary).filter((id) => !placed.has(id));
+    if (!groups.length) return html`<p class="fp3d-sub fp3d-wide">${this.t("devices_none")}</p>`;
+    return html`<div class="fp3d-wide">
+      <h4 class="fp3d-lib-head">${this.t("devices")}</h4>
+      ${groups.map(
+        (g) => html`<div class="fp3d-row fp3d-dev-row">
+          <button class="fp3d-dev-name ${placed.has(g.primary) ? "" : "fp3d-muted"}" ?disabled=${!placed.has(g.primary)} @click=${() => this.selectItem("device", g.primary)}>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d=${iconPath(kindOf(g.primary)!)} />
+            </svg>
+            <span>${entityName(hass, g.primary, areaName)}</span>
+          </button>
+          ${this.isAdmin
+            ? placed.has(g.primary)
+              ? html`<button class="fp3d-link" @click=${() => this.removeDevice(g.primary)}>${this.t("devices_remove")}</button>`
+              : html`<button class="fp3d-link" @click=${() => this.placeDevices([g.primary], zone)}>${this.t("devices_place")}</button>`
+            : nothing}
+        </div>`,
+      )}
+      ${this.isAdmin && open.length > 1
+        ? html`<button class="fp3d-link fp3d-place-all" @click=${() => this.placeDevices(open, zone)}>${this.t("devices_place_all_n", { n: open.length })}</button>`
+        : nothing}
+    </div>`;
+  }
+
+  private renderOutdoorForm(a: OutdoorArea) {
+    const admin = this.isAdmin;
     const rect = isAxisRect(a.points);
     const b = bounds(a.points);
     const setRect = (field: "x" | "z" | "w" | "d", v: number) => {
@@ -5780,29 +5861,12 @@ export class Fp3dEditor extends LitElement {
       <div class="fp3d-h3row"><h3>${this.t("outdoor")}</h3>${this.fixButton("outdoor", a.id)}</div>
       <div class="fp3d-form">
         <label class="fp3d-field fp3d-wide"
-          >${this.t("room_name")}
-          <input .value=${a.name ?? ""} ?disabled=${!admin} @change=${(e: Event) => this.updateOutdoor({ name: (e.target as HTMLInputElement).value })}
-        /></label>
-        <label class="fp3d-field fp3d-wide"
           >${this.t("outdoor_type")}
           <select ?disabled=${!admin} @change=${(e: Event) => this.updateOutdoor({ type: (e.target as HTMLSelectElement).value as OutdoorType })}>
             ${OUTDOOR_TYPES.map((t) => html`<option value=${t} ?selected=${t === a.type}>${this.t(`out_${t}` as I18nKey)}</option>`)}
           </select></label
         >
-        <label class="fp3d-field fp3d-wide" title=${this.t("outdoor_area_hint")}
-          >${this.t("area")}
-          <select
-            ?disabled=${!admin}
-            @change=${(e: Event) => {
-              const areaId = (e.target as HTMLSelectElement).value || null;
-              const picked = areas.find((area) => area.area_id === areaId);
-              this.updateOutdoor({ area_id: areaId, ...(!a.name?.trim() && picked ? { name: picked.name } : {}) });
-            }}
-          >
-            <option value="" ?selected=${!a.area_id}>${this.t("no_area")}</option>
-            ${areas.map((area) => html`<option value=${area.area_id} ?selected=${area.area_id === a.area_id}>${area.name}</option>`)}
-          </select></label
-        >
+        ${outdoorStanding(a.type) ? nothing : this.renderOutdoorZone(a)}
         ${rect
           ? html`${this.len(this.t("x"), b.x0, (v) => setRect("x", v))} ${this.len(this.t("z"), b.z0, (v) => setRect("z", v))}
             ${this.len(this.t("width"), b.x1 - b.x0, (v) => setRect("w", v), 0.01, 0.1)} ${this.len(this.t("depth"), b.z1 - b.z0, (v) => setRect("d", v), 0.01, 0.1)}`
@@ -9673,7 +9737,7 @@ export class Fp3dEditor extends LitElement {
             : floor
               ? this.renderRoomList(floor)
               : nothing}
-      ${admin ? this.renderStartView() : nothing} ${admin ? this.renderFavorites() : nothing}
+      ${admin ? this.renderStartView() : nothing} ${admin ? this.renderFavorites() : nothing} ${admin ? this.renderDirector() : nothing} ${this.renderVoice()}
       ${this.renderHelpLinks()}
       ${admin && SHOW_PRESENCE ? this.renderPresenceSettings() : nothing}
       ${floor && admin ? this.renderBackgroundForm(floor) : nothing} ${admin ? this.renderSettings() : nothing} ${admin ? this.renderTerrain() : nothing}
@@ -9999,10 +10063,12 @@ export class Fp3dEditor extends LitElement {
     // sensors with a number for the live position of a blind
     const positions = this.entityOptions((id) => /^(sensor|number|input_number)\./.test(id) && Number.isFinite(Number(this.hass?.states[id]?.state)));
     // plain contacts, and handle sensors with three states (open / tilted / closed)
+    // a garage door may also be a switch or toggle helper (a relay that drives the door): on = open, a tap switches it
     const contacts = this.entityOptions(
       (id) =>
         (id.startsWith("binary_sensor.") && ["door", "window", "opening", "garage_door"].includes(dc(id) ?? "")) ||
-        (numberish(id) && windowPosition(this.hass?.states[id]) !== null),
+        (numberish(id) && windowPosition(this.hass?.states[id]) !== null) ||
+        (garage && /^(switch|input_boolean)\./.test(id)),
     );
     // handle sensors: text states (open / tilted / closed), a window_state attribute, or a telling name
     const handles = this.entityOptions((id) => {
@@ -10598,6 +10664,122 @@ export class Fp3dEditor extends LitElement {
     </details>`;
   }
 
+  /**
+   * Kamera-Cockpit: the live director – which events a screen shows by itself (each off until switched on), and the
+   * switch for this device (a card has its own option).
+   */
+  private renderDirector() {
+    const hass = this.hass;
+    const d: DirectorSettings = this._doc.settings.director ?? {};
+    const set = (patch: Partial<DirectorSettings>) => this.change((doc) => (doc.settings.director = { ...(doc.settings.director ?? {}), ...patch }));
+    const pro = hasFeature("camera_cockpit");
+    const here = directorOnHere();
+    const placed = [...new Set(this._doc.floors.flatMap((f) => f.placements.map((p) => p.entity_id)))];
+    const bells = hass ? doorbellEntities(hass) : [];
+    const bell = hass ? (d.doorbell_entity ?? bells[0] ?? null) : null;
+    const autoCam = hass && bell ? doorbellCamera(hass, bell, placed) : null;
+    const check = (label: I18nKey, on: boolean, change: (on: boolean) => void, disabled = !pro) =>
+      html`<label class="fp3d-check fp3d-wide"
+        ><input type="checkbox" .checked=${on} ?disabled=${disabled} @change=${(e: Event) => change((e.target as HTMLInputElement).checked)} /> ${this.t(label)}</label
+      >`;
+    return html`<details class="fp3d-section">
+      <summary>🎬 ${this.t("director")}</summary>
+      <p class="fp3d-sub">${this.t("director_hint")}</p>
+      ${pro ? nothing : html`<p class="fp3d-sub">🔒 ${this.t("pro_feature_camera_cockpit")}</p>`}
+      <div class="fp3d-form">
+        ${check("director_here", here, (on) => {
+          setDirectorHere(on);
+          this.dispatchEvent(new CustomEvent("director-here", { bubbles: true, composed: true }));
+          this.requestUpdate();
+        })}
+        <p class="fp3d-sub fp3d-wide">${this.t("director_here_hint")}</p>
+        ${check("director_doorbell", !!d.doorbell, (on) => set({ doorbell: on }))}
+        ${d.doorbell && hass
+          ? html`${this.entitySelect(this.t("director_doorbell_entity"), d.doorbell_entity ?? null, bells[0] ?? null, this.entityOptions((id) => id.startsWith("event.") || id.startsWith("binary_sensor.")), (v) =>
+              set({ doorbell_entity: v === "none" ? null : v }),
+            )}
+            ${this.entitySelect(this.t("director_doorbell_camera"), d.doorbell_camera ?? null, autoCam, this.entityOptions((id) => id.startsWith("camera.") && placed.includes(id)), (v) =>
+              set({ doorbell_camera: v === "none" ? null : v }),
+            )}
+            ${!bells.length && !d.doorbell_entity ? html`<p class="fp3d-sub fp3d-wide">${this.t("director_no_doorbell")}</p>` : nothing}`
+          : nothing}
+        <label class="fp3d-field fp3d-wide"
+          >${this.t("director_motion")}
+          <select ?disabled=${!pro} @change=${(e: Event) => set({ motion: (e.target as HTMLSelectElement).value as DirectorSettings["motion"] })}>
+            ${(["off", "person", "all"] as const).map((m) => html`<option value=${m} ?selected=${(d.motion ?? "off") === m}>${this.t(`director_motion_${m}`)}</option>`)}
+          </select></label
+        >
+        ${check("director_appliances", !!d.appliances, (on) => set({ appliances: on }))}
+        ${check("director_alerts", !!d.alerts, (on) => set({ alerts: on }))}
+        ${this.num(this.t("director_hold"), d.hold ?? HOLD_DEFAULT, (v) => set({ hold: Math.min(HOLD_MAX, Math.max(HOLD_MIN, Math.round(v))) }), 5, HOLD_MIN)}
+      </div>
+      <p class="fp3d-sub">${this.t("director_back_hint")}</p>
+    </details>`;
+  }
+
+  private voicePipes: { id: string; name: string; stt: boolean }[] | null = null;
+  private voicePipesAsked = false;
+
+  /** The Assist pipeline for this device's voice control: Home Assistant's preferred one, or one chosen here. */
+  private renderVoicePipeline() {
+    const hass = this.hass;
+    if (!hass) return nothing;
+    if (!this.voicePipesAsked) {
+      this.voicePipesAsked = true;
+      hass
+        .callWS<{ pipelines: { id: string; name: string; stt_engine: string | null }[] }>({ type: "assist_pipeline/pipeline/list" })
+        .then((res) => {
+          this.voicePipes = res.pipelines.map((p) => ({ id: p.id, name: p.name, stt: !!p.stt_engine }));
+          this.requestUpdate();
+        })
+        .catch(() => undefined);
+    }
+    const own = voicePipeline();
+    return html`<div class="fp3d-form">
+      <label class="fp3d-field fp3d-wide"
+        >${this.t("voice_pipeline")}
+        <select
+          @change=${(e: Event) => {
+            setVoicePipeline((e.target as HTMLSelectElement).value || null);
+            this.requestUpdate();
+          }}
+        >
+          <option value="" ?selected=${!own}>${this.t("voice_pipeline_preferred")}</option>
+          ${(this.voicePipes ?? []).map((p) => html`<option value=${p.id} ?selected=${own === p.id} ?disabled=${!p.stt}>${p.name}${p.stt ? "" : ` (${this.t("voice_pipeline_no_stt")})`}</option>`)}
+        </select></label
+      >
+    </div>`;
+  }
+
+  /** Voice control: the microphone button on this device (a card has its own option), and the microphone test. */
+  private renderVoice() {
+    const here = voiceOnHere();
+    return html`<details class="fp3d-section">
+      <summary>🎙️ ${this.t("voice")}</summary>
+      <p class="fp3d-sub">${this.t("voice_hint")}</p>
+      <div class="fp3d-form">
+        <label class="fp3d-check fp3d-wide"
+          ><input
+            type="checkbox"
+            .checked=${here}
+            @change=${(e: Event) => {
+              setVoiceHere((e.target as HTMLInputElement).checked);
+              this.dispatchEvent(new CustomEvent("voice-here", { bubbles: true, composed: true }));
+              this.requestUpdate();
+            }}
+          />
+          ${this.t("voice_here")}</label
+        >
+      </div>
+      ${this.renderVoicePipeline()}
+      <p class="fp3d-sub">${this.t("voice_needs")}</p>
+      <div class="fp3d-actions">
+        <button class="fp3d-btn" @click=${() => this.dispatchEvent(new CustomEvent("mic-probe", { bubbles: true, composed: true }))}>${this.t("director_mic_test")}</button>
+      </div>
+      <p class="fp3d-sub">${this.t("director_mic_hint")}</p>
+    </details>`;
+  }
+
   private renderPresenceSettings() {
     const persons = Object.keys(this.hass?.states ?? {})
       .filter((id) => id.startsWith("person."))
@@ -10823,6 +11005,30 @@ export class Fp3dEditor extends LitElement {
       <p class="fp3d-sub fp3d-wide">${this.t("awning_hint")}</p>`;
   }
 
+  /** A motorised curtain or roll-down screen from a pack (#511): run time, a live position sensor, the other direction. */
+  private renderMotionFields(f: Furniture) {
+    const admin = this.isAdmin;
+    const sensors = this.entityOptions((id) => id.startsWith("sensor.") || id.startsWith("input_number.") || id.startsWith("number."));
+    const side = f.variant === "left" || f.variant === "right" ? f.variant : "both";
+    return html`${packMotion(f.type) === "curtain"
+        ? html`<label class="fp3d-field fp3d-wide"
+            >${this.t("curtain_side")}
+            <select ?disabled=${!admin} @change=${(e: Event) => {
+              const v = (e.target as HTMLSelectElement).value;
+              this.updateFurniture({ variant: v === "both" ? null : v });
+            }}>
+              ${(["both", "left", "right"] as const).map((k) => html`<option value=${k} ?selected=${side === k}>${this.t(`curtain_side_${k}`)}</option>`)}
+            </select></label
+          >`
+        : nothing}
+      ${this.num(this.t("motor_time"), f.awning_time ?? 20, (v) => this.updateFurniture({ awning_time: Math.max(2, Math.min(300, Math.round(v))) }), 1)}
+      ${this.entitySelect(this.t("awning_position"), f.awning_position ?? null, undefined, sensors, (v) => this.updateFurniture({ awning_position: v === "none" ? null : v }))}
+      <label class="fp3d-check fp3d-wide" title=${this.t("motor_invert_hint")}
+        ><input type="checkbox" .checked=${!!f.awning_invert} ?disabled=${!admin} @change=${(ev: Event) => this.updateFurniture({ awning_invert: (ev.target as HTMLInputElement).checked })} />
+        ${this.t("awning_invert")}</label
+      >`;
+  }
+
   private renderFurnitureLinks(f: Furniture) {
     const ALARM_CLASSES = new Set(["smoke", "gas", "carbon_monoxide", "heat", "moisture", "safety", "sound", "problem"]);
     if (!this.hass) return nothing;
@@ -10843,10 +11049,13 @@ export class Fp3dEditor extends LitElement {
         ? // a lamp can follow a light or a plain switch (e.g. a relay that switches the ceiling light)
           /^(light|switch|input_boolean)\./.test(id)
         : tvLike
-          ? // a media player, or the smart plug an older TV is switched with
-            /^(media_player|switch|input_boolean|light)\./.test(id)
+          ? // a media player, or the smart plug an older TV is switched with; a roll-down screen also its motor's cover (#511)
+            /^(media_player|switch|input_boolean|light)\./.test(id) || (packMotion(f.type) === "screen" && id.startsWith("cover."))
           : f.type === "awning"
             ? id.startsWith("cover.")
+            : packMotion(f.type) === "curtain"
+            ? // a motorised curtain: its motor's cover (or a switch that drives it, #511)
+              /^(cover|switch|input_boolean)\./.test(id)
             : f.type === "radiator" || f.type === "ac_unit"
             ? id.startsWith("climate.")
             : isRobotVacuum(f.type)
@@ -10864,10 +11073,10 @@ export class Fp3dEditor extends LitElement {
     return html`<div class="fp3d-form fp3d-links">
         ${f.type === "grid_point"
           ? html`<p class="fp3d-sub fp3d-wide">${this.t("grid_point_hint")}</p>`
-          : this.entitySelect(this.t(lamp ? "furn_entity_light" : tvLike ? "furn_entity_tv" : f.type === "awning" ? "awning_cover" : f.type === "radiator" || f.type === "ac_unit" ? "furn_entity_climate" : isRobotVacuum(f.type) ? "furn_entity_vacuum" : "furn_entity"), f.entity ?? null, autoPick("entity"), entities, (v) =>
+          : this.entitySelect(this.t(lamp ? "furn_entity_light" : packMotion(f.type) ? "motor_cover" : tvLike ? "furn_entity_tv" : f.type === "awning" ? "awning_cover" : f.type === "radiator" || f.type === "ac_unit" ? "furn_entity_climate" : isRobotVacuum(f.type) ? "furn_entity_vacuum" : "furn_entity"), f.entity ?? null, autoPick("entity"), entities, (v) =>
               this.updateFurniture({ entity: v }),
             )}
-        ${f.type === "awning" ? this.renderAwningFields(f) : nothing}
+        ${f.type === "awning" ? this.renderAwningFields(f) : packMotion(f.type) ? this.renderMotionFields(f) : nothing}
         ${!lamp && !(ENERGY_DEVICES as readonly string[]).includes(f.type) && !hasScreen(f.type) ? this.renderStateLinks(f) : nothing}
         ${lamp && f.entity && f.entity !== "none"
           ? html`${this.entitySelect(this.t("furn_color_entity"), f.color_entity ?? null, undefined, this.entityOptions((id) => id.startsWith("light.") && id !== f.entity), (v) => this.updateFurniture({ color_entity: v === "none" ? null : v }))}

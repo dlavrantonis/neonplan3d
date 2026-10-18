@@ -18,7 +18,7 @@ import {
   type LicenseStatus,
 } from "../api.ts";
 import { DISCORD_URL, isBeta, supporterUrl } from "../beta.ts";
-import { FEATURES, FUN, knownFeature, manualUrl, registerUrl, released, shopUrl, unlockedFeatures } from "../features.ts";
+import { FEATURES, FUN, knownFeature, manualUrl, registerUrl, released, shopUrl, unlockedFeatures, type Feature } from "../features.ts";
 import { DOG_BREEDS, PET_FURS_OF, type Building, type Pet } from "../model.ts";
 import { translate, type I18nKey } from "../i18n.ts";
 import { packName, type FurniturePack } from "../packs.ts";
@@ -36,6 +36,7 @@ export class Extensions extends LitElement {
     _licenseBusy: { state: true },
     _licenseMsg: { state: true },
     _open: { state: true },
+    _nlState: { state: true },
   };
 
   declare hass: HomeAssistant | undefined;
@@ -49,6 +50,8 @@ export class Extensions extends LitElement {
   /** What runs right now: "activate", "refresh", "remove" or a pack id being installed. */
   private declare _licenseBusy: string | null;
   private declare _licenseMsg: { ok: boolean; text: string } | null;
+  /** The newsletter box: shown, opened (the sign-up page is open, waiting for the confirmation) or hidden for good. */
+  private declare _nlState: "show" | "opened" | "hidden";
   /** Long lists opened by the viewer (the shop's packs, the installed packs); closed, a bar sums them up. */
   private declare _open: Set<string>;
   private licenseLoading = false;
@@ -69,6 +72,42 @@ export class Extensions extends LitElement {
       // nothing remembered
     }
     this._open = new Set(open);
+    let nl: string | null = null;
+    try {
+      nl = localStorage.getItem("neonplan3d.ext.newsletter");
+    } catch {
+      // nothing remembered
+    }
+    this._nlState = nl === "hidden" || nl === "opened" ? nl : "show";
+  }
+
+  private setNewsletter(state: "opened" | "hidden"): void {
+    this._nlState = state;
+    try {
+      localStorage.setItem("neonplan3d.ext.newsletter", state);
+    } catch {
+      // a private window: for this visit only
+    }
+  }
+
+  /**
+   * The newsletter invitation: the shop sends its link only to customers who have not signed up yet (the fun-pack
+   * accounts above all); signing up (double opt-in) brings the four taster packs to the key. Once signed up the shop
+   * stops sending the link and the box goes away by itself; "Don't show again" hides it on this device.
+   */
+  private renderNewsletter() {
+    const nl = this._license?.active ? this._license.newsletter : null;
+    if (!nl || this._nlState === "hidden") return nothing;
+    return html`<section class="fp3d-ext-card fp3d-offers">
+      <h3>${this.t("nl_title")}</h3>
+      ${this._nlState === "opened"
+        ? html`<p class="fp3d-sub">${this.t("nl_after", { button: this.t("license_refresh") })}</p>`
+        : html`<p class="fp3d-sub">${this.t("nl_text")}</p>`}
+      <div class="fp3d-actions">
+        <a class="fp3d-btn fp3d-primary" style="text-decoration:none" href=${nl.url} target="_blank" rel="noopener" @click=${() => this.setNewsletter("opened")}>✉️ ${this.t("nl_button")}</a>
+        <button class="fp3d-btn" @click=${() => this.setNewsletter("hidden")}>${this.t("nl_hide")}</button>
+      </div>
+    </section>`;
   }
 
   private toggleOpen(key: string): void {
@@ -124,7 +163,7 @@ export class Extensions extends LitElement {
           <a class="fp3d-btn" href=${manualUrl(this.hass?.language, "extensions")} target="_blank" rel="noopener">📖 ${this.t("manual")}</a>
         </div>
       </header>
-      ${this.renderUpdates()} ${this.renderSupporter()} ${this.renderOffers()} ${this.renderShop()}
+      ${this.renderUpdates()} ${this.renderSupporter()} ${this.renderNewsletter()} ${this.renderOffers()} ${this.renderShop()}
       <section class="fp3d-ext-card">
         <h3>${this.t("ext_pro")}</h3>
         <div class="fp3d-ext-pro">
@@ -139,7 +178,7 @@ export class Extensions extends LitElement {
                   ? html`<span class="fp3d-ext-state">${this.t("ext_active")}</span>
                       ${isBeta(f) ? html`<a class="fp3d-ext-link" href=${DISCORD_URL} target="_blank" rel="noopener">💬 ${this.t("beta_feedback")}</a>` : nothing}`
                   : isBeta(f)
-                    ? html`<a class="fp3d-ext-link" href=${supporterUrl(this.hass?.language)} target="_blank" rel="noopener">💙 ${this.t("beta_become")}</a>`
+                    ? this.renderBetaLocked(f)
                     : html`<a class="fp3d-ext-link" href=${shopUrl(this.hass?.language)} target="_blank" rel="noopener">${this.t("ext_get")}</a>`}
                 <a class="fp3d-ext-link" href=${manualUrl(this.hass?.language, f)} target="_blank" rel="noopener">${this.t("manual_more")}</a>
               </span>
@@ -149,6 +188,18 @@ export class Extensions extends LitElement {
       </section>
       ${this.renderFun(unlocked)} ${this.renderPacks()}
     </div>`;
+  }
+
+  /**
+   * A beta add-on not unlocked here: its pack waiting on the key (install it below), a supporter whose key lacks it
+   * (tell us on Discord, #583), or the way to become a supporter.
+   */
+  private renderBetaLocked(f: Feature) {
+    const lic = this._license?.active ? this._license : null;
+    const pack = lic?.packs.find((p) => [f, `pro_${f}`].includes(p.id) || p.id.endsWith(`.pro_${f}`));
+    if (pack) return html`<span class="fp3d-sub">⬇ ${this.t("beta_ready")}</span>`;
+    if (lic?.supporter) return html`<span class="fp3d-sub">${this.t("beta_supporter_missing")}</span><a class="fp3d-ext-link" href=${DISCORD_URL} target="_blank" rel="noopener">💬 Discord</a>`;
+    return html`<a class="fp3d-ext-link" href=${supporterUrl(this.hass?.language)} target="_blank" rel="noopener">💙 ${this.t("beta_become")}</a>`;
   }
 
   /** A changed plan goes to the panel, which saves it. */
@@ -347,7 +398,8 @@ export class Extensions extends LitElement {
           class="fp3d-btn"
           @click=${async () => {
             try {
-              await navigator.clipboard.writeText(`/supporter ${sup.code}`);
+              // the code alone: pasted as "/supporter CODE" Discord sends it as a plain message instead of running the command
+              await navigator.clipboard.writeText(sup.code);
               this._licenseMsg = { ok: true, text: this.t("license_copied") };
             } catch {
               /* no clipboard: the code stays readable */

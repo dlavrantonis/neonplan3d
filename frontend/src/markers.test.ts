@@ -68,24 +68,6 @@ test("sensor values use the decimals set in Home Assistant", () => {
   assert.equal(stateText({ ...hass, entities: {} } as HomeAssistant, st), "1,234.6 m³");
 });
 
-test("a linked outdoor area shows its devices on the lawn", () => {
-  const floor = newFloor("eg", "EG", 0);
-  floor.outdoor = [{ id: "front_garden", type: "lawn", points: [[0, 0], [6, 0], [6, 4], [0, 4]], area_id: "front_garden" }];
-  const building: Building = { ...emptyBuilding(), floors: [floor] };
-  const gate = st("switch.gate", "on", { friendly_name: "Gate" });
-  const hass = {
-    language: "en",
-    areas: { front_garden: { area_id: "front_garden", name: "Front Garden" } },
-    entities: { "switch.gate": { entity_id: "switch.gate", area_id: "front_garden" } },
-    devices: {},
-    states: { "switch.gate": gate },
-  } as unknown as HomeAssistant;
-  const [marker] = buildMarkers(hass, building);
-  assert.equal(marker.id, "switch.gate");
-  assert.equal(marker.roomId, "front_garden");
-  assert.ok(marker.x > 0 && marker.x < 6 && marker.z > 0 && marker.z < 4);
-});
-
 test("a placement's marker setting reaches the marker", () => {
   const b: Building = emptyBuilding();
   b.floors = [{ ...newFloor("eg", "EG", 0), placements: [{ entity_id: "sensor.t", x: 1, z: 1, y: null, marker: "always" }, { entity_id: "switch.s", x: 2, z: 1, y: null }] }];

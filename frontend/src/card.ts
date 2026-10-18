@@ -1,7 +1,7 @@
 // Lovelace card (loaded automatically by the integration, no resource needed).
 
+import { zonesOf } from "./model.ts";
 import { confirmEntities } from "./devices.ts";
-import { planTarget } from "./plan-room.ts";
 import { countView } from "./diagnostics.ts";
 import { css, html, LitElement, nothing, type PropertyValues } from "lit";
 import { BuildingController } from "./building-controller.ts";
@@ -287,7 +287,7 @@ clearTimeout(this.cleanTimer);
     // the configured room opens once, when the building is there; the kiosk return brings it back
     if (!this.roomApplied && b && c?.room) {
       this.roomApplied = true;
-      if (b.floors.some((f) => f.rooms.some((r) => r.id === c.room))) this._roomId = c.room;
+      if (b.floors.some((f) => zonesOf(f).some((r) => r.id === c.room))) this._roomId = c.room;
     }
     // the configured floor is where the card starts; with floor pictures the user can switch
     const chosen = this._floorId === undefined ? (c?.floor ?? null) : this._floorId;
@@ -354,6 +354,8 @@ clearTimeout(this.cleanTimer);
               .alerts=${c?.alerts !== false}
               .householdCard=${c?.household_card !== false}
               .alertJump=${!!c?.alert_jump}
+              .director=${!!c?.director}
+              .voice=${!!c?.voice}
               .scenes=${c?.scenes !== false}
               ?trail=${!!c?.motion_trail}
               .cameraWall=${this._cameraWall && !tt}
@@ -400,8 +402,8 @@ clearTimeout(this.cleanTimer);
               class="fp3d-card-panel"
               .hass=${this.tt.hass(this.hass)}
               ?readOnly=${tt}
-              .room=${planTarget(b, this.tt.hass(this.hass), this._roomId)?.room ?? null}
-              .floor=${planTarget(b, this.tt.hass(this.hass), this._roomId)?.floor ?? null}
+              .room=${b.floors.flatMap((f) => zonesOf(f)).find((r) => r.id === this._roomId) ?? null}
+              .floor=${b.floors.find((f) => zonesOf(f).some((r) => r.id === this._roomId)) ?? null}
               .building=${b}
               .confirmEntities=${confirmEntities(this.hass, b.floors)}
               @close=${() => (this._roomId = null)}
