@@ -112,7 +112,8 @@ function copyFonts() {
 // main 600 KB on 2026-10-15 for the camera live view, mute and volume
 // main 602 KB on 2026-10-16 for dragging the camera card
 // main 622 KB on 2026-10-18: the fork's camera live view and 3D lock on top of upstream 1.20 (620 KB)
-const BUDGET = { "neonplan3d.js": 622 * 1024, "neonplan3d-fun.js": 40 * 1024, "neonplan3d-voice.js": 60 * 1024, "neonplan3d-timetravel.js": 120 * 1024, "neonplan3d-3d.js": 780 * 1024, "neonplan3d-editor.js": 840 * 1024, "neonplan3d-card-editor.js": 250 * 1024 };
+// main 624 KB the same day: the live picture is the WebRTC Camera card
+const BUDGET = { "neonplan3d.js": 624 * 1024, "neonplan3d-fun.js": 40 * 1024, "neonplan3d-voice.js": 60 * 1024, "neonplan3d-timetravel.js": 120 * 1024, "neonplan3d-3d.js": 780 * 1024, "neonplan3d-editor.js": 840 * 1024, "neonplan3d-card-editor.js": 250 * 1024 };
 
 copyFonts();
 if (watch) {

@@ -1,8 +1,48 @@
-// Camera still that refreshes every few seconds, with play (WebRTC) and fullscreen under the frame.
+// Camera still that refreshes every few seconds. Play opens the WebRTC Camera card; fullscreen grows this frame.
 
 import { css, html, LitElement, nothing } from "lit";
 import { translate, type I18nKey } from "../i18n.ts";
 import type { HomeAssistant } from "../types.ts";
+
+/** AlexxIT's card (`webrtc-camera`), served by that integration. Lovelace may already have loaded it. */
+const WEBRTC_CARD = "/webrtc/webrtc-camera.js";
+
+/**
+ * The card draws its own title, mode and video controls. This frame already has play, sound and fullscreen,
+ * and a drag on the picture moves the popup, so those extras stay hidden.
+ */
+const CARD_STYLE = [
+  ":host { display: block; width: 100%; height: 100%; }",
+  "ha-card { background: transparent; box-shadow: none; border: 0; border-radius: 0; }",
+  ".header { display: none; }",
+  ".player:active { cursor: inherit; }",
+  "video { background: #000; }",
+].join("\n");
+
+interface WebRTCCameraElement extends HTMLElement {
+  hass: HomeAssistant;
+  video: HTMLVideoElement | null;
+  hasAudio: boolean;
+  /** When false, the card does not listen for the tab being hidden (that listener is never removed). */
+  visibilityCheck: boolean;
+  setConfig(config: Record<string, unknown>): void;
+  ondisconnect(): void;
+}
+
+let cardLoad: Promise<void> | undefined;
+
+function loadWebRTCCamera(): Promise<void> {
+  if (customElements.get("webrtc-camera")) return Promise.resolve();
+  const url = new URL(WEBRTC_CARD, location.origin).href;
+  cardLoad ??= import(/* @vite-ignore */ url).then(
+    () => undefined,
+    (err: unknown) => {
+      cardLoad = undefined;
+      if (!customElements.get("webrtc-camera")) throw err;
+    },
+  );
+  return cardLoad;
+}
 
 /** Filled speaker with waves, and the same speaker with a slash. One path each, so the button swaps shape. */
 const ICON_SOUND = "M14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.84-5 6.7v2.07C18 19.86 21 16.28 21 12S18 4.14 14 3.23M16.5 12c0-1.77-1-3.29-2.5-4.03v8.05c1.5-.71 2.5-2.24 2.5-4.02M3 9v6h4l5 5V4L7 9z";
@@ -53,6 +93,9 @@ export class Fp3dCamStill extends LitElement {
   private watch: ReturnType<typeof setInterval> | undefined;
   /** The browser accepted requestFullscreen. Escape ends that without a key event, so the cover has to follow fullscreenchange. */
   private browserFs = false;
+  /** The live card, created outside the template so its config exists before it connects. */
+  private player: WebRTCCameraElement | null = null;
+  private mounting = false;
   private readonly onKey = (e: KeyboardEvent) => {
     if (e.key === "Escape" && this._fs) this.closeFs();
   };
@@ -98,6 +141,7 @@ export class Fp3dCamStill extends LitElement {
   }
 
   disconnectedCallback(): void {
+    this.releasePlayer();
     super.disconnectedCallback();
     document.removeEventListener("keydown", this.onKey);
     document.removeEventListener("fullscreenchange", this.onFullscreen);
@@ -109,6 +153,7 @@ export class Fp3dCamStill extends LitElement {
 
   protected willUpdate(changed: Map<PropertyKey, unknown>): void {
     if (changed.has("entity")) {
+      this.releasePlayer();
       this._live = false;
       this._connecting = false;
       this._muted = true;
@@ -120,7 +165,7 @@ export class Fp3dCamStill extends LitElement {
   protected updated(): void {
     this.toggleAttribute("fs", this._fs);
     if (this._live) {
-      this.syncSound();
+      void this.mountPlayer();
       if (this.watch) return;
       this.watch = setInterval(() => this.tickLive(), 100);
       this.tickLive();
@@ -133,6 +178,7 @@ export class Fp3dCamStill extends LitElement {
   private play(): void {
     if (this.readOnly) return;
     if (this._live) {
+      this.releasePlayer();
       this._live = false;
       this._connecting = false;
       this._muted = true;
@@ -148,27 +194,107 @@ export class Fp3dCamStill extends LitElement {
     this._live = true;
   }
 
-  private tickLive(): void {
-    this.syncSound();
-    if (this._connecting) this.check();
+  private posterUrl(): string {
+    const picture = this.picture;
+    if (!picture || picture.startsWith("data:")) return "";
+    return picture;
   }
 
-  /**
-   * Mute only after a picture is on screen. Doing it earlier makes ha-web-rtc-player
-   * throw away the audio track, and an AudioContext on the same stream stops the picture.
-   */
+  /** Config and hass have to be set before the card connects, or it never opens the socket. */
+  private async mountPlayer(): Promise<void> {
+    if (!this._live || !this.entity) return;
+    if (this.player && !this.player.isConnected) this.player = null;
+    if (this.player?.isConnected) {
+      this.player.hass = this.hass;
+      this.fitVideo(this.player);
+      return;
+    }
+    if (this.mounting) return;
+    const entity = this.entity;
+    this.mounting = true;
+    try {
+      await loadWebRTCCamera();
+    } catch {
+      this.mounting = false;
+      if (this._live && this.entity === entity) {
+        this._live = false;
+        this._connecting = false;
+      }
+      return;
+    }
+    this.mounting = false;
+    if (!this._live || this.entity !== entity || !this.isConnected || this.player) return;
+    const slot = this.renderRoot.querySelector(".slot");
+    if (!slot) return;
+    const player = document.createElement("webrtc-camera") as WebRTCCameraElement;
+    const poster = this.posterUrl();
+    player.visibilityCheck = false;
+    player.setConfig({
+      entity,
+      media: "video,audio",
+      muted: true,
+      ui: false,
+      digital_ptz: false,
+      intersection: 0,
+      ...(poster ? { poster } : {}),
+      style: CARD_STYLE,
+    });
+    player.hass = this.hass;
+    slot.append(player);
+    this.player = player;
+    this.fitVideo(player);
+    this.tickLive();
+  }
+
+  private releasePlayer(): void {
+    const player = this.player;
+    this.player = null;
+    if (!player?.video) return;
+    try {
+      player.ondisconnect();
+    } catch {
+      /* already stopped */
+    }
+  }
+
+  private fitVideo(player: WebRTCCameraElement): void {
+    const video = player.video;
+    if (!video) return;
+    video.controls = false;
+    video.playsInline = true;
+    video.style.objectFit = this._fs ? "contain" : "cover";
+  }
+
+  private tickLive(): void {
+    if (this._connecting) this.check();
+    this.syncSound();
+  }
+
+  /** The card starts muted so the browser allows autoplay. Sound comes on only after a picture is showing. */
   private syncSound(): void {
-    const player = this.renderRoot.querySelector("ha-web-rtc-player") as (HTMLElement & { muted?: boolean }) | null;
-    const video = player?.shadowRoot?.querySelector("video");
-    if (!video || this._connecting) return;
-    const stream = video.srcObject;
-    const audible = stream instanceof MediaStream && stream.getAudioTracks().some((track) => track.readyState === "live");
+    const player = this.player;
+    const video = player?.video ?? null;
+    if (!player || !video || this._connecting) return;
+    this.fitVideo(player);
+    const audible = this.streamAudible(player, video);
     if (audible !== this._audio) this._audio = audible;
     if (!audible) return;
     video.muted = this._muted;
     video.volume = this._volume;
-    if (player && player.muted !== this._muted) player.muted = this._muted;
     if (video.paused) void video.play().catch(() => undefined);
+  }
+
+  private streamAudible(player: WebRTCCameraElement, video: HTMLVideoElement): boolean {
+    const stream = video.srcObject;
+    if (stream instanceof MediaStream) return stream.getAudioTracks().some((track) => track.readyState === "live");
+    return player.hasAudio;
+  }
+
+  private pictureReady(video: HTMLVideoElement): boolean {
+    if (video.videoWidth < 64) return false;
+    const stream = video.srcObject;
+    if (stream instanceof MediaStream) return stream.getVideoTracks()[0]?.readyState === "live";
+    return video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA;
   }
 
   private toggleMute(): void {
@@ -183,14 +309,18 @@ export class Fp3dCamStill extends LitElement {
     this.syncSound();
   }
 
-  /** The player lives in its own shadow root. The wait ends on a real live picture, and comes back if that picture drops. */
+  /** The card lives in its own shadow root. The wait ends on a real live picture, and comes back if that picture drops. */
   private check(): void {
-    const player = this.renderRoot.querySelector("ha-web-rtc-player") as (HTMLElement & { _error?: string }) | null;
-    const video = player?.shadowRoot?.querySelector("video");
-    const track = video?.srcObject instanceof MediaStream ? video.srcObject.getVideoTracks()[0] : undefined;
-    const frame = !!video && video.videoWidth >= 64 && track?.readyState === "live";
-    if (player?._error) this._connecting = false;
-    else if (this._live && this._connecting === frame) this._connecting = !frame;
+    const player = this.player;
+    const video = player?.video;
+    if (!player || !video) return;
+    const mode = player.shadowRoot?.querySelector(".mode")?.textContent?.trim();
+    if (mode === "error") {
+      this._connecting = false;
+      return;
+    }
+    const frame = this.pictureReady(video);
+    if (this._live && this._connecting === frame) this._connecting = !frame;
   }
 
   private t(key: I18nKey): string {
@@ -240,11 +370,10 @@ export class Fp3dCamStill extends LitElement {
   protected render() {
     const picture = this.picture;
     const src = picture ? (picture.startsWith("data:") ? picture : `${picture}${picture.includes("?") ? "&" : "?"}fp3d=${this._tick}`) : "";
-    const poster = picture && !picture.startsWith("data:") ? picture : src;
     const live = this._live;
     return html`<div class="box">
         ${live
-          ? html`<ha-web-rtc-player autoplay playsinline entityid=${this.entity} poster-url=${poster}></ha-web-rtc-player>
+          ? html`<div class="slot"></div>
             ${this._connecting ? html`<div class="wait" role="status"><span></span></div>` : nothing}`
           : src
             ? html`<img src=${src} alt=${this.alt || this.label} draggable="false" />`
@@ -277,7 +406,9 @@ export class Fp3dCamStill extends LitElement {
   static styles = css`
     :host { display: block; }
     .box { position: relative; margin: 6px 0 2px; border: 1px solid var(--fp3d-line); border-radius: 12px; overflow: hidden; background: #05080f; }
-    .box img, .box ha-web-rtc-player { display: block; width: 100%; height: 100%; aspect-ratio: 16/9; object-fit: cover; --video-max-height: none; -webkit-user-drag: none; }
+    .box img { display: block; width: 100%; height: 100%; aspect-ratio: 16/9; object-fit: cover; -webkit-user-drag: none; }
+    .slot { position: relative; display: block; width: 100%; aspect-ratio: 16/9; }
+    .slot webrtc-camera { position: absolute; inset: 0; display: block; width: 100%; height: 100%; overflow: hidden; }
     .note { display: block; padding: 28px 8px; color: var(--fp3d-muted); font-size: 13px; text-align: center; }
     .name { position: absolute; left: 8px; bottom: 6px; padding: 2px 8px; border-radius: 8px; background: rgba(7, 11, 20, 0.75); color: var(--fp3d-text); font-size: 12px; font-weight: 600; }
     .look { position: absolute; right: 8px; bottom: 12px; padding: 4px 10px; border: 1px solid var(--fp3d-line); border-radius: 999px; background: rgba(7, 11, 20, 0.8); color: var(--fp3d-accent, #37e0ff); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
@@ -286,8 +417,9 @@ export class Fp3dCamStill extends LitElement {
     .btn { display: grid; place-items: center; flex: none; width: 22px; height: 22px; margin: 0; padding: 0; border: 0; background: none; color: var(--fp3d-accent, #37e0ff); cursor: pointer; }
     .vol { width: 72px; height: 16px; margin: 0; accent-color: var(--fp3d-accent, #37e0ff); cursor: pointer; }
     :host([fs]) { position: fixed; inset: 0; z-index: 100000; display: flex; flex-direction: column; background: #000; }
-    :host([fs]) .box { flex: 1; min-height: 0; margin: 0; border: 0; border-radius: 0; }
-    :host([fs]) .box img, :host([fs]) .box ha-web-rtc-player { width: 100%; height: 100%; aspect-ratio: auto; object-fit: contain; }
+    :host([fs]) .box { display: flex; flex-direction: column; flex: 1; min-height: 0; margin: 0; border: 0; border-radius: 0; }
+    :host([fs]) .box img { width: 100%; height: 100%; aspect-ratio: auto; object-fit: contain; }
+    :host([fs]) .slot { flex: 1; width: 100%; height: auto; min-height: 0; aspect-ratio: auto; }
     :host([fs]) .look { display: none; }
     :host([fs]) .bar { flex: none; margin: 0; padding: 8px 16px 14px; }
     :host([fs]) .btn { width: 36px; height: 36px; }
