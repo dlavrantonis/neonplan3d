@@ -238,6 +238,8 @@ export class Fp3dView3d extends LitElement {
     controlsRight: { attribute: false },
     keepView: { attribute: false },
     angleLock: { attribute: false },
+    lockButton: { attribute: false },
+    _cardLock: { state: true },
     alerts: { attribute: false },
     alertJump: { attribute: false },
     director: { attribute: false },
@@ -424,6 +426,10 @@ export class Fp3dView3d extends LitElement {
   declare keepView: boolean;
   /** 3D lock: the angle stays fixed (a wall tablet nobody should turn the house on). */
   declare angleLock: boolean;
+  /** The 3D lock button on a dashboard card. Shown only when the card does not lock the angle itself. */
+  declare lockButton: boolean;
+  /** The card button's own lock. The card keeps writing angleLock from YAML, so this is remembered apart from it. */
+  private declare _cardLock: boolean;
   /** The stage is narrower than 700 px (smaller floor pictures, phone layout). */
   private declare _narrowStage: boolean;
   private resizeObs: ResizeObserver | null = null;
@@ -636,6 +642,8 @@ export class Fp3dView3d extends LitElement {
     this.controlsRight = false;
     this.keepView = false;
     this.angleLock = false;
+    this.lockButton = false;
+    this._cardLock = false;
     this._narrowStage = false;
     this.alerts = true;
     this.alertJump = false;
@@ -829,7 +837,7 @@ export class Fp3dView3d extends LitElement {
       });
       this.viewer.setWallMode(this.wallMode);
       this.viewer.setKeepView(this.keepView);
-      this.viewer.setAngleLock(this.angleLock);
+      this.viewer.setAngleLock(this.heldAngle);
       this.viewer.setTheme(this.effectiveTheme());
       this.viewer.setAccent(this.accent ?? null);
       this.viewer.setFurnishMode(this.furnish);
@@ -923,9 +931,9 @@ export class Fp3dView3d extends LitElement {
     if (changed.has("roomId") && (this.roomId || changed.get("roomId"))) v.selectRoom(this.roomId);
     if (changed.has("wallMode")) v.setWallMode(this.wallMode);
     if (changed.has("keepView")) v.setKeepView(this.keepView);
-    if (changed.has("angleLock")) {
-      v.setAngleLock(this.angleLock);
-      if (this.angleLock) this.stopWalk();
+    if (changed.has("angleLock") || changed.has("_cardLock")) {
+      v.setAngleLock(this.heldAngle);
+      if (this.heldAngle) this.stopWalk();
     }
     if (changed.has("explode")) v.setExplode(this.explode);
     if (changed.has("keepRoof")) v.setKeepRoof(this.keepRoof);
@@ -3696,7 +3704,7 @@ export class Fp3dView3d extends LitElement {
     countView("walk");
     const b = this.building;
     const v = this.viewer;
-    if (!b || !v || this._walk || this.angleLock) return;
+    if (!b || !v || this._walk || this.heldAngle) return;
     const withRooms = b.floors.filter((f) => f.rooms.some((r) => r.points.length >= 3));
     const byRoom = this.roomId ? withRooms.find((f) => f.rooms.some((r) => r.id === this.roomId)) : undefined;
     const floor = byRoom ?? withRooms.find((f) => f.id === this.floorId) ?? [...withRooms].sort((x, y) => Math.abs(x.elevation) - Math.abs(y.elevation))[0];
@@ -3751,7 +3759,7 @@ export class Fp3dView3d extends LitElement {
   }
 
   private renderWalk() {
-    if (!this.walkable || this.ro || !this.building || !this.hass || this.angleLock) return nothing;
+    if (!this.walkable || this.ro || !this.building || !this.hass || this.heldAngle) return nothing;
     const t = (k: I18nKey) => translate(this.hass, k);
     if (!this._walk)
       return html`<button class="fp3d-walk-btn" title=${t("walk_start")} aria-label=${t("walk_start")} @click=${() => void this.startWalk()}>
@@ -3949,6 +3957,19 @@ export class Fp3dView3d extends LitElement {
     if (!this.ro && (this.mediaGrace.get(id)?.until ?? 0) > Date.now() && isUnavailable(st)) return true;
     const label = [st.attributes.media_title, st.attributes.app_name, st.attributes.source].some((v) => typeof v === "string" && !!v.trim());
     return !isUnavailable(st) && (st.state === "playing" || (st.state === "paused" && label));
+  }
+
+  /** YAML lock, or the card button when the card leaves the angle free. */
+  private get heldAngle(): boolean {
+    return this.angleLock || this._cardLock;
+  }
+
+  /** Locks the viewing angle. Drag still moves the view, and zoom still works. */
+  private renderLock() {
+    if (!this.lockButton || !this.hass || this._walk || this.furnish) return nothing;
+    const on = this.heldAngle;
+    const label = translate(this.hass, "angle_lock");
+    return html`<button type="button" class="fp3d-walk-btn fp3d-lock-btn" aria-pressed=${on} title=${translate(this.hass, "angle_lock_hint")} aria-label=${label} @click=${() => (this._cardLock = !this._cardLock)}><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d=${iconPath("lock")} /></svg><span>${label}</span></button>`;
   }
 
   /** The eye: one tap hides every bar and overlay so only the stage remains, the next brings them back. */
@@ -4867,7 +4888,7 @@ export class Fp3dView3d extends LitElement {
     >
       ${this._error ? html`<p class="fp3d-error">${this._error}</p>` : nothing} ${this.clean ? nothing : this.renderEnergy()} ${this.renderHologram()} ${this.clean ? nothing : this.renderLegend()}
       ${this.renderClock()} ${this.renderAlerts()} ${this.clean || this._walk ? nothing : html`${this.renderHousehold()} ${this.renderThumbs()} ${this.renderScenes()} ${this.renderFind()} ${this.renderCentral()}`} ${this.clean ? nothing : this.renderWalk()} ${this.renderSwipe()} ${this.renderInfo()} ${this.renderBinInfo()} ${this.renderGangMenu()} ${this.renderThrough()} ${this.renderCameraWall()}
-      ${this.clean ? nothing : this.renderProHint()} ${this.renderMenu()} ${this.renderEye()}
+      ${this.clean ? nothing : this.renderProHint()} ${this.renderMenu()} ${this.renderLock()} ${this.renderEye()}
       ${this.renderMic()}
       ${this._micProbe && this.hass ? html`<fp3d-mic-probe .hass=${this.hass} .building=${this.building} @close=${() => ((this._micProbe = false), micProbeDone())}></fp3d-mic-probe>` : nothing}
       ${this.showStats && this._stats
@@ -5355,6 +5376,16 @@ export class Fp3dView3d extends LitElement {
       }
       .fp3d-thumbs-small .fp3d-thumb {
         width: 104px;
+      }
+      .fp3d-walk-btn.fp3d-lock-btn {
+        z-index: 6;
+        top: 58px;
+        right: var(--fp3d-lock-right, var(--fp3d-walk-right, 12px));
+      }
+      .fp3d-lock-btn[aria-pressed="true"] {
+        background: var(--fp3d-accent);
+        color: var(--fp3d-accent-text);
+        border-color: transparent;
       }
       /* at the top right, clear of the floor pictures and the switch rows (a card moves it beside its own buttons) */
       .fp3d-walk-btn {
@@ -6528,6 +6559,9 @@ export class Fp3dView3d extends LitElement {
       @container fp3d ((max-width: 700px) or ((orientation: portrait) and (max-width: 1000px))) {
         .fp3d-panel-open :is(.fp3d-find-btn, .fp3d-find, .fp3d-thumbs, .fp3d-legend, .fp3d-stats, .fp3d-scenes) {
           display: none;
+        }
+        .fp3d-panel-open .fp3d-walk-btn.fp3d-lock-btn {
+          right: var(--fp3d-walk-right, 12px);
         }
       }
       @media (pointer: coarse) {

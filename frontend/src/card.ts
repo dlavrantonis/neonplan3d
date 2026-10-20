@@ -376,6 +376,7 @@ clearTimeout(this.cleanTimer);
               .controlsRight=${c?.controls_side === "right"}
               .keepView=${c?.keep_view === true}
               .angleLock=${c?.angle_lock === true}
+              .lockButton=${c?.angle_lock !== true}
               .floorStack=${c?.floor_stack ?? "dim"}
               .panelOpen=${!!this._roomId && c?.room_panel !== false}
               .alerts=${c?.alerts !== false}
@@ -403,6 +404,7 @@ clearTimeout(this.cleanTimer);
               .startView=${c?.start_view ?? null}
               style=${[
                 tt ? `--fp3d-bottom-inset: ${bar ? "calc(52px + var(--fp3d-tt-h))" : "var(--fp3d-tt-h)"}` : bar ? "--fp3d-bottom-inset: 52px" : "",
+                c?.angle_lock !== true && this._roomId && c?.room_panel !== false ? "--fp3d-lock-right:392px" : "",
               ]
                 .filter(Boolean)
                 .join(";")}
