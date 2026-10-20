@@ -152,6 +152,19 @@ KNOWN_FEATURES = [
     "fun_halloween",
 ]
 
+# A module: code the shop delivers (not part of the public repository), run by NeonPlan's module loader.
+# `api` is the loader interface it was written for, `kind` where it plugs in. Signed and bound like any pack.
+# voice: answers spoken questions; stage: draws in the house (water, cards, warnings, editor fields)
+MODULE_KINDS = ["voice", "stage"]
+MODULE_SCHEMA = vol.Schema(
+    {
+        vol.Required("api"): 1,
+        vol.Required("kind"): vol.In(MODULE_KINDS),
+        # the module's JavaScript (an ES module with a default export)
+        vol.Required("code"): vol.All(str, vol.Length(min=1, max=400_000)),
+    }
+)
+
 PAYLOAD_SCHEMA = vol.Schema(
     {
         vol.Required("format"): PACK_FORMAT,
@@ -172,6 +185,8 @@ PAYLOAD_SCHEMA = vol.Schema(
             vol.Length(max=10),
         ),
         vol.Required("items"): vol.All([ITEM_SCHEMA], vol.Length(min=0, max=200)),
+        # a module (see MODULE_SCHEMA); such a pack usually carries no furniture
+        vol.Optional("module"): MODULE_SCHEMA,
     }
 )
 
@@ -210,6 +225,13 @@ def parts_of(text: str) -> tuple[dict[str, Any], dict[str, str]]:
     return data["payload"], {"key": sig["key"], "sig": sig["sig"]}
 
 
+def _unknown_value(err: vol.Invalid) -> bool:
+    """Whether a value outside a known list failed: voluptuous says so in its message; Probatio, which checks
+    schemas since Home Assistant 2026.9, gives it the code "not_in_list" (pointed out by hohoanganh)."""
+    found = getattr(err, "errors", None) or [err]
+    return any(getattr(e, "code", None) == "not_in_list" or "value must be one of" in str(e) for e in found)
+
+
 def validate_payload(payload: Any) -> dict[str, Any]:
     """Check the content of a pack (without its signature); raises PackError."""
     features = payload.get("features") if isinstance(payload, dict) else None
@@ -218,18 +240,22 @@ def validate_payload(payload: Any) -> dict[str, Any]:
         if unknown:
             # a Pro add-on newer than this installation (#218): ask for an update, not a cryptic error
             raise PackError("needs_update", ", ".join(unknown))
+    # a module written for a newer loader: an update, not a broken pack
+    module = payload.get("module") if isinstance(payload, dict) else None
+    if isinstance(module, dict) and isinstance(module.get("api"), int) and module["api"] > 1:
+        raise PackError("needs_update", f"module api {module['api']}")
     try:
         clean = PAYLOAD_SCHEMA(payload)
     except vol.Invalid as err:
         # a value this version does not know yet (a new item kind of a newer pack release)
-        if "value must be one of" in str(err):
+        if _unknown_value(err):
             raise PackError("needs_update", str(err)) from err
         raise PackError("invalid_content", str(err)) from err
     ids = [item["id"] for item in clean["items"]]
     if len(ids) != len(set(ids)):
         raise PackError("invalid_content", "item ids must be unique")
-    if not ids and not clean["features"]:
-        raise PackError("invalid_content", "a pack needs items or features")
+    if not ids and not clean["features"] and not clean.get("module"):
+        raise PackError("invalid_content", "a pack needs items, features or a module")
     return clean
 
 
@@ -268,7 +294,9 @@ def verify_pack(text: str, keys: dict[str, str] | None = None, instance: str | N
     except (InvalidSignature, ValueError) as err:
         raise PackError("bad_signature") from err
     payload = validate_payload(data["payload"])
-    if signature["key"] in STUDIO_KEYS and (not str(payload["id"]).startswith("studio.") or payload["features"]):
+    if signature["key"] in STUDIO_KEYS and (
+        not str(payload["id"]).startswith("studio.") or payload["features"] or payload.get("module")
+    ):
         raise PackError("bad_signature", "the studio key signs studio furniture only")
     if instance is not None and payload["instance"] is not None and payload["instance"] != instance:
         raise PackError("wrong_instance", "the pack is bound to another installation")

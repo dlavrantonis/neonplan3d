@@ -48,7 +48,7 @@ export class OrbitControls {
    * kept for furniture, the middle and right buttons turn the view instead of panning it; fingers are unchanged.
    */
   leftDragTurns = true;
-  /** The angle stays put. A drag slides the view, and the wheel or a pinch still zooms. */
+  /** 3D lock (idea from dlavrantonis' fork): the angle stays put – a drag moves the view, zooming still works. */
   angleLock = false;
 
   private pointers = new Map<number, { x: number; y: number; button: number; type: string }>();
@@ -145,7 +145,10 @@ export class OrbitControls {
     let theta = to.theta ?? from.theta;
     while (theta - from.theta > Math.PI) theta -= 2 * Math.PI;
     while (theta - from.theta < -Math.PI) theta += 2 * Math.PI;
-    const target = { target: (to.target ?? from.target).clone(), radius: to.radius ?? from.radius, theta, phi: to.phi ?? from.phi };
+    // locked: the flight moves and zooms, the angle stays
+    const target = this.angleLock
+      ? { target: (to.target ?? from.target).clone(), radius: to.radius ?? from.radius, theta: from.theta, phi: from.phi }
+      : { target: (to.target ?? from.target).clone(), radius: to.radius ?? from.radius, theta, phi: to.phi ?? from.phi };
     this.velocity = { theta: 0, phi: 0 };
     if (duration <= 0 || matchMedia("(prefers-reduced-motion: reduce)").matches) {
       this.view = target;
@@ -231,22 +234,20 @@ export class OrbitControls {
         return;
       }
       const mouse = p.type === "mouse";
-      if (this.angleLock) {
-        this.pan(dx, dy);
-        this.velocity = { theta: 0, phi: 0 };
-      } else if (mouse && !this.leftDragTurns && p.button === 0) {
-        // the editor's wall view keeps the left button for furniture
-      } else {
-        const pan = (p.button === 1 || p.button === 2 || e.shiftKey) && (this.leftDragTurns || !mouse);
-        if (pan) this.pan(dx, dy);
-        else {
-          const h = this.el.clientHeight || 1;
-          const dTheta = (-dx / h) * 3.2;
-          const dPhi = (-dy / h) * 2.4;
-          this.view.theta += dTheta;
-          this.view.phi = clamp(this.view.phi + dPhi, MIN_PHI, MAX_PHI);
-          this.velocity = { theta: dTheta, phi: dPhi };
-        }
+      if (mouse && !this.leftDragTurns && p.button === 0) {
+        p.x = e.clientX;
+        p.y = e.clientY;
+        return;
+      }
+      const pan = this.angleLock || ((p.button === 1 || p.button === 2 || e.shiftKey) && (this.leftDragTurns || !mouse));
+      if (pan) this.pan(dx, dy);
+      else {
+        const h = this.el.clientHeight || 1;
+        const dTheta = (-dx / h) * 3.2;
+        const dPhi = (-dy / h) * 2.4;
+        this.view.theta += dTheta;
+        this.view.phi = clamp(this.view.phi + dPhi, MIN_PHI, MAX_PHI);
+        this.velocity = { theta: dTheta, phi: dPhi };
       }
       p.x = e.clientX;
       p.y = e.clientY;
